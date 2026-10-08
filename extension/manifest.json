@@ -72,29 +72,6 @@
       "description": "Open ChatGPT side panel"
     }
   },
-  "content_scripts": [
-    {
-      "all_frames": false,
-      "js": [
-        "content-scripts/chatgpt-website.js"
-      ],
-      "matches": [
-        "https://chatgpt.com/*"
-      ],
-      "run_at": "document_end"
-    },
-    {
-      "all_frames": true,
-      "js": [
-        "content-scripts/codex-work-media-permission.js"
-      ],
-      "matches": [
-        "https://chatgpt.com/*"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    }
-  ],
   "minimum_chrome_version": "116",
   "side_panel": {
     "default_path": "codex-sidepanel/index.html"

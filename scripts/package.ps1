@@ -225,6 +225,9 @@ if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
         Pop-Location
     }
 } else {
+# Guard: el manifest no puede declarar ficheros ausentes (Chrome no carga la extension)
+& node (Join-Path $RootDir "scripts\check-extension-files.mjs") (Join-Path $stageDir "extension")
+if ($LASTEXITCODE -ne 0) { throw "El manifest de la extension declara ficheros que no existen." }
     Compress-Archive -Path "$stageDir\*" -DestinationPath $zipPath -CompressionLevel Fastest
 }
 $zipSizeMb = [math]::Round(((Get-Item $zipPath).Length / 1MB), 2)

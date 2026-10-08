@@ -14,6 +14,7 @@ allowed = [
     "WindowsTerminal.exe",
     "cmd.exe",
     "powershell.exe",
+    "herdr.exe",
 
     # Entornos y Lenguajes
     "python.exe",

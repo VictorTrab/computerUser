@@ -1,16 +1,5 @@
-"""
-Universal Agent Runner para ComputerUser MCP Server
-Permite que CUALQUIER modelo de IA (local o en la nube) que soporte tool calling
-estilo OpenAI controle el escritorio de Windows y el navegador Chrome via MCP.
-
-Proveedores soportados out-of-the-box:
-- Ollama (Local, 100% privado y gratis): http://localhost:11434/v1
-- LM Studio (Local): http://localhost:1234/v1
-- DeepSeek: https://api.deepseek.com
-- OpenAI: https://api.openai.com/v1
-- OpenRouter (Claude, Llama, etc.): https://openrouter.ai/api/v1
-- Cualquier API compatible con /chat/completions y function calling.
-"""
+"""CLI runner for interacting with the ComputerUser MCP server
+via OpenAI-compatible chat completion endpoints."""
 
 import os
 import sys
@@ -169,7 +158,7 @@ class ComputerUserMcpClient:
 
 def load_system_prompt():
     prompt_parts = [
-        "Eres un agente con control directo del escritorio Windows y del navegador.",
+        "You have direct control of the Windows desktop and web browser via the local ComputerUser MCP server.",
         "You have access to the `js` tool to execute persistent local automation commands.",
         "\n--- OPERATIONAL GOVERNANCE & EXECUTION POLICY ---"
     ]
@@ -179,14 +168,14 @@ def load_system_prompt():
         with open(rules_file, "r", encoding="utf-8") as f:
             prompt_parts.append(f.read())
 
-    prompt_parts.append("\n--- GUIA COMPUTER USE (ESCRITORIO) ---")
-    cu_skill = os.path.join(SKILLS_DIR, "computer-use-windows", "SKILL.md")
+    prompt_parts.append("\n--- DESKTOP AUTOMATION GUIDE ---")
+    cu_skill = os.path.join(SKILLS_DIR, "free-computer-user", "SKILL.md")
     if os.path.exists(cu_skill):
         with open(cu_skill, "r", encoding="utf-8") as f:
             prompt_parts.append(f.read())
 
-    prompt_parts.append("\n--- GUIA CONTROL DE NAVEGADOR ---")
-    chrome_skill = os.path.join(SKILLS_DIR, "control-chrome", "SKILL.md")
+    prompt_parts.append("\n--- BROWSER AUTOMATION GUIDE ---")
+    chrome_skill = os.path.join(SKILLS_DIR, "free-control-chrome", "SKILL.md")
     if os.path.exists(chrome_skill):
         with open(chrome_skill, "r", encoding="utf-8") as f:
             prompt_parts.append(f.read())

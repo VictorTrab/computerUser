@@ -1,1 +1,0 @@
-import{vt as e}from"./config-queries-DUP1-2DU.js";import{ar as t}from"./thread-detail-level-DFryaulP.js";function n(n,{action:r,inputMessageId:i,messageId:a,surface:o,threadId:s,turnId:c}){e(n,t,{action:r,inputMessageId:i??void 0,messageId:a??void 0,surface:o,threadId:s,turnId:c})}export{n as t};

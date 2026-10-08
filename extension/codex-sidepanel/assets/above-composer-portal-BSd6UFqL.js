@@ -1,1 +1,0 @@
-function e(e){if(typeof document>`u`)return null;for(let t of document.querySelectorAll(`[data-above-composer-portal]`))if(t.getAttribute(`data-above-composer-conversation-id`)===e)return t;return null}export{e as t};

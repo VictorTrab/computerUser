@@ -29,14 +29,40 @@ This policy defines mandatory execution standards, safety boundaries, and operat
 
 ## 3. Browser Automation Standards (`browser`)
 
-- **Lightweight Semantic Inspection:** Use `tab.accessibility.snapshot()` and Playwright selector engines (`tab.playwright.click`, `tab.playwright.fill`) as primary methods instead of visual OCR or full-screen captures.
-- **Local Scheme Support:** Use `file://` and `localhost` schemes for local document inspection, staging builds, and verification workflows.
+- **Dedicated Tab Group Session:** Always group automation tabs using `await b.nameSession("Descriptive Task Title")` to isolate agent tabs visually and operationally from personal user tabs.
+- **Tab Lifecycle Management:**
+  - **Deliverable Tabs (`tab.markDeliverable()`):** Tabs containing final requested deliverables (reports, completed forms, purchase/task confirmations) must be marked to keep them and the tab group open when the turn completes.
+  - **Handoff Tabs (`tab.markHandoff()` / `tab.requestManualHandoff()`):** Tabs requiring user intervention (2FA, CAPTCHA, manual payment entry) must be marked, focused, and handed off without closing.
+  - **Ephemeral Tabs (`tab.close()`):** Intermediate throwaway tabs used for quick queries or discarded searches must be explicitly closed before finishing to avoid polluting the browser.
+  - **Pre-existing User Tabs:** Tabs claimed via `b.user.claimTab(...)` must NEVER be closed; they are simply released upon completion.
+- **Economic State Inspection:**
+  - Prioritize accessibility trees and locators (`tab.playwright.locator(...)` or `tab.domSnapshot()`) for element interaction and text reading.
+  - Reserve `tab.screenshot()` strictly for visual design verification, layout validation, or when visual confirmation is explicitly requested. Do not request both DOM snapshots and screenshots simultaneously by default.
+- **Redundant Navigation Prevention:**
+  - Check `await tab.url()` before navigating. If the tab is already on the target URL, do not execute `tab.goto(url)` to preserve session state, form inputs, and scroll position. Use `tab.reload()` only when explicitly required to refresh data.
+- **Focused Navigation & Anti-looping:**
+  - Perform direct and targeted queries. If a navigation or selector fails, evaluate alternatives rather than entering blind retry loops with minute URL tweaks.
 
 ---
 
-## 4. Irreversible Actions & User Safeguards
+## 4. Security, Confirmation Matrix & Human Handoff
 
-- **Mandatory Confirmation Required:** Require explicit user authorization prior to:
-  1. Permanent deletion of files, directories, repositories, or databases.
-  2. Sending external messages, publishing content, or transmitting unreviewed communications.
-  3. Executing monetary transactions, license activations, or credential approvals.
+- **Pre-Approved (Autonomous execution without confirmation):**
+  - Dismissing or accepting standard cookie consent notices and privacy banners.
+  - Accepting terms of service required for the user-requested task.
+  - Downloading files explicitly requested by the user.
+- **Mandatory User Authorization (Explicit confirmation required before action):**
+  - Permanent deletion of files, directories, databases, accounts, or records.
+  - Sending external communications, publishing public posts, or unreviewed emails.
+  - Executing monetary transactions, purchases, or license activations.
+  - Modifying account credentials or critical security settings.
+- **Strict Human Handoff (Never automated, must transfer control to the user):**
+  - Account password changes or master password updates.
+  - Bypassing browser SSL/TLS certificate warnings or insecure connection alerts.
+  - Completing biometric prompts or hardware security key challenges (WebAuthn/FIDO).
+
+---
+
+## 5. Visual Evidence Reporting
+
+- When capturing visual screenshots as verification or deliverable proof for the user, embed the image directly in Markdown (`![captura](ruta_o_uri)`) in the response instead of outputting raw disk paths or plaintext links.

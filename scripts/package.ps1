@@ -156,7 +156,6 @@ $itemsToInclude = @(
     "runtime",
     "extension",
     "home",
-    "skills",
     "rules",
     "bin",
     "scripts",

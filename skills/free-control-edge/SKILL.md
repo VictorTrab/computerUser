@@ -45,33 +45,59 @@ await b.user.claimTab(userTabs[0]);
 const tab = await b.tabs.get(userTabs[0].id);
 ```
 
-## 3. Web Navigation & Playwright Selectors
+## 3. Smart Web Navigation & Locators
+
+Avoid redundant reloads: check current URL before navigating.
 
 ```js
-// Navigate
-await tab.goto("https://example.com");
-await tab.playwright.waitForLoadState({ state: "domcontentloaded", timeoutMs: 30000 });
+const targetUrl = "https://example.com";
+if ((await tab.url()) !== targetUrl) {
+  await tab.goto(targetUrl);
+  await tab.playwright.waitForLoadState({ state: "domcontentloaded", timeoutMs: 30000 });
+}
 
-// Fill input using locator
+// Locate and interact with elements
 const searchBox = tab.playwright.locator("input[type='search'], input[name='q']").first();
 await searchBox.fill("search query", { timeoutMs: 15000 });
 await searchBox.press("Enter");
 
-// Click buttons or links
 const submitBtn = tab.playwright.locator("button#submit").first();
 await submitBtn.click({ timeoutMs: 10000 });
 ```
 
-## 4. Inspection, Screenshots & Keep Tab Group Open
+## 4. Economic State Inspection
+
+Prioritize reading the DOM structure or accessibility tree before taking screenshots. Use screenshots only when visual appearance, rendering, or proof is needed.
 
 ```js
-// Page metadata
-const url = await tab.url();
-const title = await tab.title();
+// 1. Economic text/element inspection (fast, low overhead)
+const snapshot = await tab.domSnapshot();
 
-// Capture visual screenshot
+// 2. Visual screenshot (only when visual verification is necessary)
 const pngBytes = await tab.screenshot();
-
-// Keep the tab and tab group open when the turn finishes
-await tab.markDeliverable();
 ```
+
+## 5. Tab Lifecycle Management
+
+Manage tabs responsibly:
+- **Deliverables:** Mark final user-requested results so the tab and group stay open.
+- **Handoff:** Transfer to user when manual intervention (2FA, CAPTCHAs, payments) is required.
+- **Ephemeral cleanup:** Close throwaway search tabs to avoid polluting the browser.
+- **User tabs:** Never close tabs claimed via `b.user.claimTab(...)`.
+
+```js
+// Keep the tab and tab group open as final deliverable
+await tab.markDeliverable();
+
+// Transfer manual control to user (e.g. for login 2FA or CAPTCHA)
+await tab.markHandoff();
+// Or request immediate browser focus for user intervention:
+await tab.requestManualHandoff();
+
+// Close temporary / discardable tab when done
+await tab.close();
+```
+
+## 6. Visual Evidence Reporting
+
+When capturing visual confirmation for the user, save or display the image inline in your response (`![captura](ruta_o_uri)`) so the user can verify the outcome without opening disk paths manually.

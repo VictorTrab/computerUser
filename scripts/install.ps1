@@ -153,18 +153,26 @@ $skillNames = @(
 )
 
 foreach ($sName in $skillNames) {
-    $srcSkill = Join-Path $InstallDir "skills\$sName\SKILL.md"
-    if (Test-Path $srcSkill) {
-        $destDir = Join-Path $globalSkillsDir $sName
+    $destDir = Join-Path $globalSkillsDir $sName
+    if (-not (Test-Path $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-        Copy-Item -Path $srcSkill -Destination (Join-Path $destDir "SKILL.md") -Force
     }
-}
+    $destFile = Join-Path $destDir "SKILL.md"
 
-# Limpiar carpeta temporal skills dentro del motor (~/.free-computer-user) para evitar duplicados
-$devRepoPath = Join-Path $env:USERPROFILE "projects\computerUser"
-if ($InstallDir -ne $devRepoPath -and (Test-Path "$InstallDir\skills")) {
-    Remove-Item -Recurse -Force "$InstallDir\skills" -ErrorAction SilentlyContinue
+    # Buscar origen local (ej. repositorio clonado)
+    $localSkill = Join-Path $PSScriptRoot "..\skills\$sName\SKILL.md"
+    if (Test-Path $localSkill) {
+        Copy-Item -Path $localSkill -Destination $destFile -Force
+    } else {
+        # Descarga directa a ~/.agents\skills (sin tocar el directorio del motor)
+        $rawUrl = "https://raw.githubusercontent.com/VictorTrab/computerUser/main/skills/$sName/SKILL.md"
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $rawUrl -OutFile $destFile -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Write-Host "  (Aviso: No se pudo descargar la skill $sName desde GitHub: $_)" -ForegroundColor DarkYellow
+        }
+    }
 }
 
 Write-Host "  [OK] Skills disponibles universalmente en ~/.agents\skills (Chrome, Brave, Edge y Escritorio)." -ForegroundColor Green

@@ -94,8 +94,12 @@ $globalSkills = Join-Path $env:USERPROFILE ".agents\skills"
 
 $gCu = Test-Path (Join-Path $globalSkills "free-computer-user\SKILL.md")
 $gCh = Test-Path (Join-Path $globalSkills "free-control-chrome\SKILL.md")
-Report-Check -Name "Skills Globales (~/.agents)" -Status ($gCu -and $gCh) `
-    -SuccessMsg "free-computer-user y free-control-chrome instaladas" `
+$gBr = Test-Path (Join-Path $globalSkills "free-control-brave\SKILL.md")
+$gEd = Test-Path (Join-Path $globalSkills "free-control-edge\SKILL.md")
+$allSkillsOk = ($gCu -and $gCh -and $gBr -and $gEd)
+
+Report-Check -Name "Skills Globales (~/.agents)" -Status $allSkillsOk `
+    -SuccessMsg "free-computer-user, free-control-chrome, free-control-brave y free-control-edge instaladas" `
     -ErrorMsg "Faltan skills en ~/.agents\skills" `
     -FixMsg "Ejecuta 'free-computer-user update' para desplegarlas"
 

@@ -38,6 +38,8 @@ $requiredFiles = @(
     "home\computer-use\config.toml",
     "skills\free-computer-user\SKILL.md",
     "skills\free-control-chrome\SKILL.md",
+    "skills\free-control-brave\SKILL.md",
+    "skills\free-control-edge\SKILL.md",
     "rules\AGENTS.md",
     "mcp_config.json"
 )

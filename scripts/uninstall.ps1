@@ -28,10 +28,14 @@ Write-Host "[2/5] Eliminando skills de ~/.agents/skills y ~/.dsh/skills..." -For
 $skillPaths = @(
     (Join-Path $env:USERPROFILE ".agents\skills\free-computer-user"),
     (Join-Path $env:USERPROFILE ".agents\skills\free-control-chrome"),
+    (Join-Path $env:USERPROFILE ".agents\skills\free-control-brave"),
+    (Join-Path $env:USERPROFILE ".agents\skills\free-control-edge"),
     (Join-Path $env:USERPROFILE ".agents\skills\computer-use-windows"),
     (Join-Path $env:USERPROFILE ".agents\skills\control-chrome"),
     (Join-Path $env:USERPROFILE ".dsh\skills\free-computer-user"),
     (Join-Path $env:USERPROFILE ".dsh\skills\free-control-chrome"),
+    (Join-Path $env:USERPROFILE ".dsh\skills\free-control-brave"),
+    (Join-Path $env:USERPROFILE ".dsh\skills\free-control-edge"),
     (Join-Path $env:USERPROFILE ".dsh\skills\computer-use-windows"),
     (Join-Path $env:USERPROFILE ".dsh\skills\control-chrome")
 )

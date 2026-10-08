@@ -141,21 +141,33 @@ foreach ($r in $regTargets) {
 Write-Host "[4/7] Desplegando skills globales en ~/.agents\skills..." -ForegroundColor Gray
 
 $globalSkillsDir = Join-Path $env:USERPROFILE ".agents\skills"
+if (-not (Test-Path $globalSkillsDir)) {
+    New-Item -ItemType Directory -Path $globalSkillsDir -Force | Out-Null
+}
 
-# Limpiar nombres legados
-Remove-Item -Recurse -Force (Join-Path $globalSkillsDir "computer-use-windows") -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force (Join-Path $globalSkillsDir "control-chrome") -ErrorAction SilentlyContinue
+$skillNames = @(
+    "free-computer-user",
+    "free-control-chrome",
+    "free-control-brave",
+    "free-control-edge"
+)
 
-# Instalar en ~/.agents\skills
-$cuDir = Join-Path $globalSkillsDir "free-computer-user"
-$chromeDir = Join-Path $globalSkillsDir "free-control-chrome"
-New-Item -ItemType Directory -Path $cuDir -Force | Out-Null
-New-Item -ItemType Directory -Path $chromeDir -Force | Out-Null
+foreach ($sName in $skillNames) {
+    $srcSkill = Join-Path $InstallDir "skills\$sName\SKILL.md"
+    if (Test-Path $srcSkill) {
+        $destDir = Join-Path $globalSkillsDir $sName
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        Copy-Item -Path $srcSkill -Destination (Join-Path $destDir "SKILL.md") -Force
+    }
+}
 
-Copy-Item (Join-Path $InstallDir "skills\free-computer-user\SKILL.md") (Join-Path $cuDir "SKILL.md") -Force
-Copy-Item (Join-Path $InstallDir "skills\free-control-chrome\SKILL.md") (Join-Path $chromeDir "SKILL.md") -Force
+# Limpiar carpeta temporal skills dentro del motor (~/.free-computer-user) para evitar duplicados
+$devRepoPath = Join-Path $env:USERPROFILE "projects\computerUser"
+if ($InstallDir -ne $devRepoPath -and (Test-Path "$InstallDir\skills")) {
+    Remove-Item -Recurse -Force "$InstallDir\skills" -ErrorAction SilentlyContinue
+}
 
-Write-Host "  [OK] Skills disponibles universalmente en ~/.agents\skills." -ForegroundColor Green
+Write-Host "  [OK] Skills disponibles universalmente en ~/.agents\skills (Chrome, Brave, Edge y Escritorio)." -ForegroundColor Green
 
 # 5. Configurar DeepSeek Harness si existe
 Write-Host "[5/7] Verificando integracion con DeepSeek Harness (dsh)..." -ForegroundColor Gray

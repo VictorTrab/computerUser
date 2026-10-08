@@ -1,28 +1,28 @@
 ---
-name: free-control-chrome
-description: Control, automate, and inspect Google Chrome browser sessions, tabs, and web apps via the local bridge.
+name: free-control-brave
+description: Control, automate, and inspect Brave Browser sessions, tabs, and web apps via the local bridge.
 ---
 
-# Google Chrome Automation (`free-control-chrome`)
+# Brave Browser Automation (`free-control-brave`)
 
-Execute persistent JavaScript via the `js` MCP tool to automate Google Chrome tabs, interact with web pages, and inspect active user sessions.
+Execute persistent JavaScript via the `js` MCP tool to automate Brave Browser tabs, interact with web pages, and inspect active user sessions.
 
-## 1. Initialization, Target Chrome & Tab Group Session
+## 1. Initialization, Target Brave & Tab Group Session
 
-Always target Google Chrome and assign a descriptive session name. `b.nameSession(...)` creates a dedicated Chrome Tab Group labeled with your task title to keep agent tabs isolated from personal tabs.
+Always target Brave Browser and assign a descriptive session name. `b.nameSession(...)` creates a dedicated Brave Tab Group labeled with your task title to keep agent tabs isolated from personal tabs.
 
 ```js
 const { setupBrowserRuntime } = await import("file:///C:/Users/User/.free-computer-user/runtime/browser/browser-client.mjs");
 const agent = await setupBrowserRuntime({ environment: "codex-app" });
 
 const browsers = await agent.browsers.list();
-const chrome = browsers.find(b => b.family === "chrome" || b.name.toLowerCase().includes("chrome"));
-if (!chrome) {
-  throw new Error(`Google Chrome is not running with the extension connected. Connected browsers: ${browsers.map(b => b.name).join(", ") || "none"}`);
+const brave = browsers.find(b => b.family === "brave" || b.name.toLowerCase().includes("brave"));
+if (!brave) {
+  throw new Error(`Brave Browser is not running with the extension connected. Connected browsers: ${browsers.map(b => b.name).join(", ") || "none"}`);
 }
-const b = await agent.browsers.get(chrome.id);
+const b = await agent.browsers.get(brave.id);
 
-// Group tabs into a named Chrome Tab Group
+// Group tabs into a named Brave Tab Group
 await b.nameSession("Descriptive Task Title");
 ```
 
@@ -31,7 +31,7 @@ await b.nameSession("Descriptive Task Title");
 ### Create a New Tab (Grouped)
 ```js
 const tab = await b.tabs.new();
-await tab.goto("https://www.google.com");
+await tab.goto("https://search.brave.com");
 ```
 
 ### Inspect or Claim Existing User Tabs
@@ -53,7 +53,7 @@ await tab.goto("https://example.com");
 await tab.playwright.waitForLoadState({ state: "domcontentloaded", timeoutMs: 30000 });
 
 // Fill input using locator
-const searchBox = tab.playwright.locator("input[name='q']").first();
+const searchBox = tab.playwright.locator("input[type='search'], input[name='q']").first();
 await searchBox.fill("search query", { timeoutMs: 15000 });
 await searchBox.press("Enter");
 

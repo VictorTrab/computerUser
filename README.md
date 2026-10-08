@@ -34,7 +34,7 @@ irm https://raw.githubusercontent.com/VictorTrab/computerUser/main/scripts/insta
 ### ¿Qué hace el instalador automáticamente?
 - 📁 Configura el motor de forma autocontenida sin requerir instalar OpenAI Codex ni ChatGPT.
 - 🌐 Registra el **Native Messaging Host** en Windows para **Google Chrome**, **Brave** y **Microsoft Edge**.
-- 🧠 Despliega las **Skills Globales** en `~/.agents/skills` (reconocidas por Cursor, Cline, OpenCode, Codex y Gemini CLI) y en `~/.dsh/skills`.
+- 🧠 Despliega las **Skills Globales** en `~/.agents/skills` (reconocidas por Cursor, Cline, OpenCode, Gemini CLI, etc.) y en `~/.dsh/skills`.
 - 🤖 Configura automáticamente el cliente MCP en **DeepSeek Harness** (`cordis.patch.yml`) y en **Antigravity** (`mcp_config.json`).
 - 🔒 Aplica rutas absolutas dinámicas y whitelist local de aplicaciones en tu propio equipo.
 
@@ -102,15 +102,15 @@ computerUser/
 ├── home/
 │   └── computer-use/config.toml   # Whitelist local de aplicaciones autorizadas
 ├── skills/
-│   ├── computer-use-windows/      # Guía para interactuar con la API @oai/sky
-│   └── control-chrome/            # Guía para interactuar con browser-client
+│   ├── computer-use-windows/      # Guia para interactuar con el motor de escritorio
+│   └── control-chrome/            # Guia para interactuar con browser-client
 ├── scripts/
 │   ├── install.ps1                # Instalador universal desatendido
-│   ├── update.ps1                 # Actualizador automático vía Git
+│   ├── update.ps1                 # Actualizador automatico via Git
 │   ├── uninstall.ps1              # Desinstalador limpio
 │   └── generate_intro_gif.py      # Generador de banner animado
 └── adapters/
-    └── deepseek_harness.py        # Arnés / cliente en Python para pruebas directas
+    └── universal_runner.py        # Runner universal CLI (Ollama, DeepSeek, OpenAI, etc.)
 ```
 
 ---

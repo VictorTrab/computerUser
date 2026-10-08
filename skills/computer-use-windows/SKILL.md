@@ -24,7 +24,7 @@ if (!globalThis.sky) {
    const windows = await sky.list_windows();
    nodeRepl.write(JSON.stringify(windows, null, 2));
    ```
-   *(Nota: La aplicación objetivo debe estar autorizada en `config.toml` dentro de `[apps] allowed`. Si la app solicitada por el usuario no está en la lista, añade su nombre de ejecutable como `"app.exe"` a `home/computer-use/config.toml` o `~/.codex/computer-use/config.toml` antes de interactuar con ella).*
+   *(Nota: La aplicación objetivo debe estar autorizada en `config.toml` dentro de `[apps] allowed`. Si la app solicitada por el usuario no está en la lista, añade su nombre de ejecutable como `"app.exe"` a `home/computer-use/config.toml` antes de interactuar con ella).*
 
 2. **Lanzar una aplicación si no está abierta:**
    ```js

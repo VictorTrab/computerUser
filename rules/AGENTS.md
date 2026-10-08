@@ -6,7 +6,7 @@ Este documento rige el comportamiento de cualquier agente de IA (Cursor, Cline, 
 
 ## 1. Reglas de Acceso a Aplicaciones (Allowlist de Seguridad)
 
-- **Política de Ejecutables:** El motor nativo de Windows valida el nombre del proceso contra la lista blanca en `home/computer-use/config.toml` (o `~/.codex/computer-use/config.toml`). Cualquier intento de interactuar con un ejecutable fuera de esta lista será bloqueado por política.
+- **Política de Ejecutables:** El motor nativo de Windows valida el nombre del proceso contra la lista blanca en `home/computer-use/config.toml`. Cualquier intento de interactuar con un ejecutable fuera de esta lista será bloqueado por política.
 - **Gestión Dinámica de Apps:** Si el usuario te pide controlar una aplicación legítima que no está en la lista (por ejemplo: un software interno, una app de diseño, etc.):
   1. Identifica el nombre del proceso ejecutable (ej. `app.exe`).
   2. Añádelo a la sección `[apps] allowed` de `home/computer-use/config.toml`.

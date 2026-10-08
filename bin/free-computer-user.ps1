@@ -10,7 +10,7 @@ param(
 )
 
 $RootDir = (Resolve-Path "$PSScriptRoot\..").Path
-$VersionNumber = "1.0.3"
+$VersionNumber = "1.0.4"
 
 if ($v.IsPresent -or $version.IsPresent -or ($Action -in "version", "--version", "-v", "-version")) {
     Write-Host "free-computer-user v$VersionNumber"

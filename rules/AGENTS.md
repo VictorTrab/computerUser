@@ -19,7 +19,13 @@ This policy defines mandatory execution standards, safety boundaries, and operat
 ## 2. Desktop Automation Standards (`@oai/sky`)
 
 - **Semantic Prioritization (UI Automation):** Prefer semantic accessibility indices (`element_index`) and direct value updates (`set_value`) over absolute coordinate clicks `(x, y)`. Semantic elements remain stable across window resizing, display scaling, and multi-monitor setups.
-- **State Invalidation & Refresh:** Treat window states as point-in-time snapshots. Always refresh state after performing mutating interactions (clicks, keyboard input, hotkeys):
+- **Secondary Actions for Expandable Controls:** Use `sky.perform_secondary_action({ window, element_index, action: "Expand" | "Collapse" | "Scroll Up" | ... })` for comboboxes, tree views, accordions, and menus rather than blind coordinate clicks.
+- **Coordinate Actions with `screenshotId`:** When coordinate interactions `(x, y)` are necessary, always bind `screenshotId: state.screenshots?.[0]?.id` to prevent drift if the window shifts or resizes between capture and input.
+- **Action Batching:** Batch related sequential inputs (e.g. `set_value`, `press_key({ key: "Tab" })`, `type_text`) before requesting a new `get_window_state()` snapshot to optimize responsiveness.
+- **Document Text Reading:** In text-heavy applications (editors, viewers, log viewers), inspect `state.accessibility?.document_text` directly rather than traversing deep UI element trees.
+- **Modal & Child Dialog Handling:** When an action spawns a modal or child dialog (e.g., "Save As", "Open File", confirm prompts), query `sky.list_windows()` to acquire the newly opened child window and redirect `get_window_state()` to it.
+- **Focus Recovery (`StartMenuExperienceHost.exe`):** If an input error indicates that the coordinate is over a system window or taskbar (`StartMenuExperienceHost.exe`), call `await sky.activate_window({ window: targetWindow })`, refresh window state, and retry the interaction once.
+- **State Invalidation & Refresh:** Treat window states as point-in-time snapshots. Always refresh state after performing mutating interactions to verify outcomes:
   ```js
   const state = await sky.get_window_state({ window: targetWindow, include_screenshot: true, include_text: true });
   ```

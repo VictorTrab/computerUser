@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Temp & OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+.DS_Store
+
+# Git ignore exceptions
+!runtime/
+!extension/

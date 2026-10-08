@@ -4,41 +4,60 @@ param(
 
 $ErrorActionPreference = 'SilentlyContinue'
 
+# Identidad propia de ComputerUser (independiente de Codex/OpenAI)
+$NativeHostName = "com.victortrab.computeruser"
+$LegacyHostName = "com.openai.codexextension"
+
 Write-Host ""
 Write-Host "=== Desinstalador de Free Computer User ===" -ForegroundColor Yellow
 Write-Host ""
 
 # 1. Eliminar registros de Native Messaging Host
 Write-Host "[1/5] Desregistrando Native Messaging Hosts de navegadores..." -ForegroundColor Gray
-$regTargets = @(
-    "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.openai.codexextension",
-    "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.openai.codexextension",
-    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.openai.codexextension"
+$browserRegRoots = @(
+    "HKCU:\Software\Google\Chrome\NativeMessagingHosts",
+    "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts"
 )
 
-foreach ($r in $regTargets) {
-    if (Test-Path $r) {
-        Remove-Item -Path $r -Recurse -Force
-        Write-Host "  [OK] Eliminado $r" -ForegroundColor Green
+foreach ($root in $browserRegRoots) {
+    # Nuestro host propio: se elimina siempre.
+    $ownKey = Join-Path $root $NativeHostName
+    if (Test-Path $ownKey) {
+        Remove-Item -Path $ownKey -Recurse -Force
+        Write-Host "  [OK] Eliminado $ownKey" -ForegroundColor Green
+    }
+
+    # Nombre heredado: se elimina SOLO si apunta a nuestra instalacion, para no
+    # romper nunca el native host de la app Codex si esta instalada.
+    $legacyKey = Join-Path $root $LegacyHostName
+    if (Test-Path $legacyKey) {
+        $legacyValue = (Get-ItemProperty -Path $legacyKey -ErrorAction SilentlyContinue).'(default)'
+        if ($legacyValue -and ($legacyValue -match "computerUser|free-computer-user")) {
+            Remove-Item -Path $legacyKey -Recurse -Force
+            Write-Host "  [OK] Eliminada entrada heredada $legacyKey" -ForegroundColor Green
+        } else {
+            Write-Host "  (Se conserva ${legacyKey}: pertenece a la app Codex)" -ForegroundColor DarkGray
+        }
     }
 }
 
 # 2. Eliminar Skills globales
 Write-Host "[2/5] Eliminando skills de ~/.agents/skills y ~/.dsh/skills..." -ForegroundColor Gray
-$skillPaths = @(
-    (Join-Path $env:USERPROFILE ".agents\skills\free-computer-user"),
-    (Join-Path $env:USERPROFILE ".agents\skills\free-control-chrome"),
-    (Join-Path $env:USERPROFILE ".agents\skills\free-control-brave"),
-    (Join-Path $env:USERPROFILE ".agents\skills\free-control-edge"),
-    (Join-Path $env:USERPROFILE ".agents\skills\computer-use-windows"),
-    (Join-Path $env:USERPROFILE ".agents\skills\control-chrome"),
-    (Join-Path $env:USERPROFILE ".dsh\skills\free-computer-user"),
-    (Join-Path $env:USERPROFILE ".dsh\skills\free-control-chrome"),
-    (Join-Path $env:USERPROFILE ".dsh\skills\free-control-brave"),
-    (Join-Path $env:USERPROFILE ".dsh\skills\free-control-edge"),
-    (Join-Path $env:USERPROFILE ".dsh\skills\computer-use-windows"),
-    (Join-Path $env:USERPROFILE ".dsh\skills\control-chrome")
+$skillNames = @(
+    "free-computer-user",
+    "free-control-browser",
+    "free-control-chrome",
+    "free-control-brave",
+    "free-control-edge",
+    "computer-use-windows",
+    "control-chrome"
 )
+$skillPaths = @()
+foreach ($n in $skillNames) {
+    $skillPaths += (Join-Path $env:USERPROFILE ".agents\skills\$n")
+    $skillPaths += (Join-Path $env:USERPROFILE ".dsh\skills\$n")
+}
 
 foreach ($sp in $skillPaths) {
     if (Test-Path $sp) {

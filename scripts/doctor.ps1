@@ -1,6 +1,11 @@
 # Diagnóstico de salud para Free Computer User
 $InstallDir = (Resolve-Path "$PSScriptRoot\..").Path
 
+# Identidad propia de ComputerUser (independiente de Codex/OpenAI)
+$NativeHostName = "com.victortrab.computeruser"
+$LegacyHostName = "com.openai.codexextension"
+$ExpectedExtensionId = "hjfjdiahpgemdghjcnjmcdkdeapgplpd"
+
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "        FREE COMPUTER USER - DIAGNOSTICO DE SALUD         " -ForegroundColor Yellow
@@ -53,13 +58,25 @@ Report-Check -Name "Python Runtime" -Status $hasPython `
     -ErrorMsg "Python no encontrado en el sistema" `
     -FixMsg "Instala Python desde python.org si deseas ejecutar scripts adaptadores"
 
+# Shim `browser`: permite `await import("browser")` desde cualquier skill
+$shimIndex = Join-Path $InstallDir "runtime\bin\node_modules\browser\index.mjs"
+$shimClient = Join-Path $InstallDir "runtime\bin\node_modules\browser\browser-client.mjs"
+$shimOk = (Test-Path $shimIndex) -and (Test-Path $shimClient)
+if ($shimOk) {
+    $shimOk = (Get-FileHash $shimClient).Hash -eq (Get-FileHash (Join-Path $InstallDir "runtime\browser\browser-client.mjs")).Hash
+}
+Report-Check -Name "Shim 'browser'" -Status $shimOk `
+    -SuccessMsg "import('browser') disponible y sincronizado" `
+    -ErrorMsg "Falta el shim o esta desincronizado con runtime\browser" `
+    -FixMsg "Ejecuta 'free-computer-user update' para regenerarlo"
+
 # 2. Native Messaging Host en Registro de Windows
 Write-Host ""
 Write-Host "[2/6] Verificando Registro de Windows (Native Messaging Host)..." -ForegroundColor Cyan
 $regKeys = @(
-    @{ Browser = "Google Chrome"; Path = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.openai.codexextension" },
-    @{ Browser = "Brave Browser"; Path = "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.openai.codexextension" },
-    @{ Browser = "Microsoft Edge"; Path = "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.openai.codexextension" }
+    @{ Browser = "Google Chrome"; Path = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$NativeHostName" },
+    @{ Browser = "Brave Browser"; Path = "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\$NativeHostName" },
+    @{ Browser = "Microsoft Edge"; Path = "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$NativeHostName" }
 )
 
 foreach ($r in $regKeys) {
@@ -78,14 +95,42 @@ foreach ($r in $regKeys) {
 # 3. Extensión de Navegador
 Write-Host ""
 Write-Host "[3/6] Verificando Extension de Navegador..." -ForegroundColor Cyan
-$manifestPath = Join-Path $InstallDir "extension\manifest.json"
+$extensionDir = Join-Path $InstallDir "extension"
+$manifestPath = Join-Path $extensionDir "manifest.json"
 $extExists = Test-Path $manifestPath
 Report-Check -Name "Manifest V3" -Status $extExists `
     -SuccessMsg "Manifiesto y assets presentes" `
     -ErrorMsg "No se encuentra extension\manifest.json"
 
-Write-Host "      -> Para cargar en Chrome/Brave: activa 'Modo Desarrollador' en chrome://extensions y carga descomprimida:" -ForegroundColor DarkGray
-Write-Host "         $InstallDir\extension" -ForegroundColor DarkGray
+# El ID de la extension se deriva de la clave publica del manifiesto; debe
+# coincidir con allowed_origins del native host o el navegador no conectara.
+if ($extExists) {
+    try {
+        $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+        $der = [Convert]::FromBase64String($manifest.key)
+        $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($der)
+        $derivedId = ""
+        foreach ($b in $hash[0..15]) {
+            $derivedId += [char](97 + [int]($b -shr 4)) + [char](97 + [int]($b -band 15))
+        }
+        $hostManifestPath = Join-Path $InstallDir "runtime\extension-host\$NativeHostName.json"
+        $originsOk = $false
+        if (Test-Path $hostManifestPath) {
+            $originsOk = (Get-Content $hostManifestPath -Raw) -match "chrome-extension://$derivedId/"
+        }
+        Report-Check -Name "ID de extension" -Status $originsOk `
+            -SuccessMsg "ID $derivedId coincide con el native host" `
+            -ErrorMsg "ID $derivedId no coincide con allowed_origins de $NativeHostName.json" `
+            -FixMsg "Ejecuta 'free-computer-user update' para regenerar el native host manifest"
+    } catch {
+        Report-Check -Name "ID de extension" -Status $false `
+            -ErrorMsg "No se pudo derivar el ID desde extension\manifest.json" `
+            -FixMsg "Revisa que el manifiesto incluya el campo 'key'"
+    }
+}
+
+Write-Host "      -> Carga descomprimida (una vez por navegador): $extensionDir" -ForegroundColor DarkGray
+Write-Host "         chrome://extensions | brave://extensions | edge://extensions" -ForegroundColor DarkGray
 
 # 4. Skills Globales en ~/.agents
 Write-Host ""
@@ -93,15 +138,20 @@ Write-Host "[4/6] Verificando Skills de Agentes..." -ForegroundColor Cyan
 $globalSkills = Join-Path $env:USERPROFILE ".agents\skills"
 
 $gCu = Test-Path (Join-Path $globalSkills "free-computer-user\SKILL.md")
-$gCh = Test-Path (Join-Path $globalSkills "free-control-chrome\SKILL.md")
-$gBr = Test-Path (Join-Path $globalSkills "free-control-brave\SKILL.md")
-$gEd = Test-Path (Join-Path $globalSkills "free-control-edge\SKILL.md")
-$allSkillsOk = ($gCu -and $gCh -and $gBr -and $gEd)
+$gBrowser = Test-Path (Join-Path $globalSkills "free-control-browser\SKILL.md")
+$allSkillsOk = ($gCu -and $gBrowser)
 
 Report-Check -Name "Skills Globales (~/.agents)" -Status $allSkillsOk `
-    -SuccessMsg "free-computer-user, free-control-chrome, free-control-brave y free-control-edge instaladas" `
+    -SuccessMsg "free-computer-user y free-control-browser instaladas" `
     -ErrorMsg "Faltan skills en ~/.agents\skills" `
     -FixMsg "Ejecuta 'free-computer-user update' para desplegarlas"
+
+$duplicated = @("free-control-chrome", "free-control-brave", "free-control-edge") |
+    Where-Object { Test-Path (Join-Path $globalSkills "$_\SKILL.md") }
+Report-Check -Name "Sin skills duplicadas" -Status ($duplicated.Count -eq 0) `
+    -SuccessMsg "Solo hay una skill de navegador" `
+    -ErrorMsg ("Skills duplicadas presentes: " + ($duplicated -join ", ")) `
+    -FixMsg "Ejecuta 'free-computer-user update' para consolidarlas en free-control-browser"
 
 # 5. Configuración de Seguridad y Allowlist
 Write-Host ""
@@ -122,9 +172,26 @@ Report-Check -Name "config.toml Allowlist" -Status ($allowlistOk -and $appsCount
 Write-Host ""
 Write-Host "[6/6] Verificando Integraciones MCP..." -ForegroundColor Cyan
 $mcpConfigLocal = Join-Path $InstallDir "mcp_config.json"
-Report-Check -Name "mcp_config.json Local" -Status (Test-Path $mcpConfigLocal) `
+$mcpExists = Test-Path $mcpConfigLocal
+Report-Check -Name "mcp_config.json Local" -Status $mcpExists `
     -SuccessMsg "Archivo de servidor MCP disponible" `
     -ErrorMsg "Falta mcp_config.json"
+
+if ($mcpExists) {
+    $mcpRaw = Get-Content $mcpConfigLocal -Raw
+    Report-Check -Name "Modo offline (sin token)" -Status ($mcpRaw -match "BROWSER_USE_DISABLE_AMBIENT_NETWORK") `
+        -SuccessMsg "BROWSER_USE_DISABLE_AMBIENT_NETWORK activo: no requiere cuenta ni token de Codex/OpenAI" `
+        -ErrorMsg "Falta BROWSER_USE_DISABLE_AMBIENT_NETWORK; el motor pedira el token de Codex" `
+        -FixMsg "Ejecuta 'free-computer-user update' para regenerar mcp_config.json"
+}
+
+# El servicio de navegador se parchea para no exigir identidad en modo local.
+$servicePath = Join-Path $InstallDir "runtime\browser\browser-service.mjs"
+$servicePatched = (Test-Path $servicePath) -and ((Get-Content $servicePath -Raw) -match "ComputerUser patch")
+Report-Check -Name "Servicio de navegador propio" -Status $servicePatched `
+    -SuccessMsg "browser-service.mjs con el parche local de ComputerUser" `
+    -ErrorMsg "browser-service.mjs sin el parche local (pedira identidad de Codex)" `
+    -FixMsg "Ejecuta 'free-computer-user update' o reinstala desde el release oficial"
 
 $dshCordis = Join-Path $env:USERPROFILE ".dsh\profiles\desktop\cordis.patch.yml"
 if (Test-Path $dshCordis) {

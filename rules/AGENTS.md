@@ -35,6 +35,9 @@ This policy defines mandatory execution standards, safety boundaries, and operat
 
 ## 3. Browser Automation Standards (`browser`)
 
+- **Single browser skill:** `free-control-browser` cubre Chrome, Brave y Edge. Apunta a **Google Chrome** por defecto y cambia solo si el usuario nombra otro navegador ("en Brave", "usa Edge"). Nunca cambies de navegador en silencio: si el pedido no esta conectado, informa cual si lo esta.
+- **Runtime offline:** el motor corre con `BROWSER_USE_DISABLE_AMBIENT_NETWORK=1` y no debe requerir nunca cuenta, token ni la app de Codex/OpenAI.
+
 - **Dedicated Tab Group Session:** Always group automation tabs using `await b.nameSession("Descriptive Task Title")` to isolate agent tabs visually and operationally from personal user tabs.
 - **Tab Lifecycle Management:**
   - **Deliverable Tabs (`tab.markDeliverable()`):** Tabs containing final requested deliverables (reports, completed forms, purchase/task confirmations) must be marked to keep them and the tab group open when the turn completes.
@@ -42,8 +45,8 @@ This policy defines mandatory execution standards, safety boundaries, and operat
   - **Ephemeral Tabs (`tab.close()`):** Intermediate throwaway tabs used for quick queries or discarded searches must be explicitly closed before finishing to avoid polluting the browser.
   - **Pre-existing User Tabs:** Tabs claimed via `b.user.claimTab(...)` must NEVER be closed; they are simply released upon completion.
 - **Economic State Inspection:**
-  - Prioritize accessibility trees and locators (`tab.playwright.locator(...)` or `tab.domSnapshot()`) for element interaction and text reading.
-  - Reserve `tab.screenshot()` strictly for visual design verification, layout validation, or when visual confirmation is explicitly requested. Do not request both DOM snapshots and screenshots simultaneously by default.
+  - Prioritize accessibility trees and locators (`tab.playwright.locator(...)` or `tab.playwright.domSnapshot()`) for element interaction and text reading.
+  - Reserve `tab.screenshot({})` strictly for visual design verification, layout validation, or when visual confirmation is explicitly requested. Do not request both DOM snapshots and screenshots simultaneously by default.
 - **Redundant Navigation Prevention:**
   - Check `await tab.url()` before navigating. If the tab is already on the target URL, do not execute `tab.goto(url)` to preserve session state, form inputs, and scroll position. Use `tab.reload()` only when explicitly required to refresh data.
 - **Focused Navigation & Anti-looping:**

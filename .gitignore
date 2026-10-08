@@ -28,3 +28,11 @@ dist/
 # Git ignore exceptions
 !runtime/
 !extension/
+
+# Identidad de firma local (no publicar)
+.identity/
+# Generados por el instalador / runtime (no versionar)
+runtime/bin/node_modules/browser/browser-client.mjs
+runtime/extension-host/com.victortrab.computeruser.json
+runtime/extension-host/com.openai.codexextension.json
+home/skills/

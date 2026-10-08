@@ -37,10 +37,9 @@ $requiredFiles = @(
     "extension\manifest.json",
     "home\computer-use\config.toml",
     "skills\free-computer-user\SKILL.md",
-    "skills\free-control-chrome\SKILL.md",
-    "skills\free-control-brave\SKILL.md",
-    "skills\free-control-edge\SKILL.md",
+    "skills\free-control-browser\SKILL.md",
     "rules\AGENTS.md",
+    "scripts\smoke-browser-bridge.mjs",
     "mcp_config.json"
 )
 
@@ -56,11 +55,16 @@ Write-Host "  [OK] Todos los componentes criticos estan presentes." -ForegroundC
 Write-Host "  -> Verificando sintaxis de archivos JSON..." -ForegroundColor Gray
 $jsonFiles = @(
     "extension\manifest.json",
-    "runtime\extension-host\com.openai.codexextension.json",
+    "runtime\extension-host\com.victortrab.computeruser.json",
     "mcp_config.json"
 )
 foreach ($jf in $jsonFiles) {
-    $content = Get-Content (Join-Path $RootDir $jf) -Raw
+    $jfPath = Join-Path $RootDir $jf
+    if (-not (Test-Path $jfPath)) {
+        Write-Host "  (omitido: $jf no generado en este arbol)" -ForegroundColor DarkGray
+        continue
+    }
+    $content = Get-Content $jfPath -Raw
     $null = $content | ConvertFrom-Json
 }
 Write-Host "  [OK] Archivos JSON validos y sin errores de sintaxis." -ForegroundColor Green
@@ -143,6 +147,21 @@ try {
     Write-Host "  [WARN] Handshake MCP interactivo no disponible en runner: $_" -ForegroundColor DarkYellow
 }
 
+# D2. Sincronizar el shim `browser` (el cliente vive en runtime\browser)
+$shimDir = Join-Path $RootDir "runtime\bin\node_modules\browser"
+New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
+Copy-Item -Path (Join-Path $RootDir "runtime\browser\browser-client.mjs") -Destination (Join-Path $shimDir "browser-client.mjs") -Force
+Write-Host "  [OK] Shim 'browser' sincronizado." -ForegroundColor Green
+# E. Smoke test del puente de navegador (sin navegador real)
+Write-Host "  -> Ejecutando smoke test del puente de navegador..." -ForegroundColor Gray
+$smokeScript = Join-Path $RootDir "scripts\smoke-browser-bridge.mjs"
+if (Test-Path $smokeScript) {
+    & $nodeExe $smokeScript $RootDir
+    if ($LASTEXITCODE -ne 0) { throw "Smoke test del puente de navegador fallido (exit $LASTEXITCODE)." }
+    Write-Host "  [OK] Puente de navegador verificado end-to-end." -ForegroundColor Green
+} else {
+    Write-Host "  [WARN] scripts\smoke-browser-bridge.mjs no encontrado; se omite." -ForegroundColor DarkYellow
+}
 # 2. Preparar directorio temporal de empaquetado
 Write-Host ""
 Write-Host "[2/4] Preparando arbol de empaquetado limpio..." -ForegroundColor Cyan
@@ -156,6 +175,7 @@ $itemsToInclude = @(
     "runtime",
     "extension",
     "home",
+    "skills",
     "rules",
     "bin",
     "scripts",
@@ -175,7 +195,12 @@ foreach ($item in $itemsToInclude) {
 # Limpiar exclusiones dentro del stage (scripts de dev, temporales)
 Remove-Item -Force (Join-Path $stageDir "scripts\generate_intro_gif.py") -ErrorAction SilentlyContinue
 Remove-Item -Force (Join-Path $stageDir "scripts\package.ps1") -ErrorAction SilentlyContinue
-Get-ChildItem -Path $stageDir -Recurse -Include "*.sqlite*", "*.wal", "*.shm", "*.tmp" | Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $stageDir -Recurse -File -Include "*.sqlite*", "*.wal", "*.shm", "*.tmp" | Remove-Item -Force -ErrorAction SilentlyContinue
+# Estado generado por el runtime (ids de instalacion, skills de sistema de Codex,
+# temporales) no debe viajar en el release.
+foreach ($junk in @("home\skills", "home\tmp", "home\.tmp", "home\installation_id", "home\.codex-global-state.json", "home\history.jsonl")) {
+    Remove-Item -Recurse -Force (Join-Path $stageDir $junk) -ErrorAction SilentlyContinue
+}
 
 Write-Host "  [OK] Arbol de stage creado y depurado." -ForegroundColor Green
 

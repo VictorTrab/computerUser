@@ -175,7 +175,7 @@ def load_system_prompt():
             prompt_parts.append(f.read())
 
     prompt_parts.append("\n--- BROWSER AUTOMATION GUIDE ---")
-    chrome_skill = os.path.join(SKILLS_DIR, "free-control-chrome", "SKILL.md")
+    chrome_skill = os.path.join(SKILLS_DIR, "free-control-browser", "SKILL.md")
     if os.path.exists(chrome_skill):
         with open(chrome_skill, "r", encoding="utf-8") as f:
             prompt_parts.append(f.read())

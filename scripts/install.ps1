@@ -5,10 +5,25 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Escritura UTF-8 sin BOM compatible con Windows PowerShell 5.1 y PowerShell 7.
+function Write-Utf8NoBom {
+    param([string]$Path, [string]$Content)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    [System.IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+# --- Identidad propia de ComputerUser (independiente de Codex/OpenAI) --------
+$NativeHostName = "com.victortrab.computeruser"
+$ExtensionId    = "hjfjdiahpgemdghjcnjmcdkdeapgplpd"
+$LegacyHostName = "com.openai.codexextension"
+$SkillNames     = @("free-computer-user", "free-control-browser")
+$LegacySkills   = @("free-control-chrome", "free-control-brave", "free-control-edge")
+
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "      FREE COMPUTER USER - INSTALADOR UNIVERSAL           " -ForegroundColor Yellow
-Write-Host "   Windows Desktop Automation & Chrome Bridge via MCP     " -ForegroundColor Cyan
+Write-Host "   Windows Desktop Automation & Browser Bridge via MCP    " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -61,27 +76,39 @@ $browserDir = Join-Path $InstallDir "runtime\browser"
 $homeDir = Join-Path $InstallDir "home"
 $extHostDir = Join-Path $InstallDir "runtime\extension-host"
 
-# Actualizar manifest del Native Messaging Host
-$hostManifest = Join-Path $extHostDir "com.openai.codexextension.json"
-$extHostExe = (Join-Path $extHostDir "windows\x64\extension-host.exe").Replace("\", "\\")
+# Shim `browser`: el kernel de node_repl solo permite que un paquete importe
+# archivos dentro de un node_modules configurado, asi que browser-client.mjs se
+# mantiene copiado dentro del paquete en cada instalacion/actualizacion.
+$shimDir = Join-Path $binDir "node_modules\browser"
+New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
+Copy-Item -Path (Join-Path $browserDir "browser-client.mjs") -Destination (Join-Path $shimDir "browser-client.mjs") -Force
+Write-Host "  -> Shim 'browser' sincronizado con el cliente actual." -ForegroundColor DarkGray
 
-$hostJson = @{
-    name = "com.openai.codexextension"
+# Limpiar residuos de versiones anteriores / estado del runtime en el home propio
+foreach ($junk in @("skills", "tmp", ".tmp", "installation_id")) {
+    $junkPath = Join-Path $homeDir $junk
+    if (Test-Path $junkPath) { Remove-Item -Recurse -Force $junkPath -ErrorAction SilentlyContinue }
+}
+
+# Actualizar manifest del Native Messaging Host (nombre propio, sin colisiones)
+$hostManifest = Join-Path $extHostDir "$NativeHostName.json"
+Remove-Item -Force (Join-Path $extHostDir "$LegacyHostName.json") -ErrorAction SilentlyContinue
+$extHostExe = Join-Path $extHostDir "windows\x64\extension-host.exe"
+
+$hostJson = [ordered]@{
+    name = $NativeHostName
     description = "ComputerUser browser native messaging host"
     type = "stdio"
     path = $extHostExe
-    allowed_origins = @(
-        "chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/",
-        "chrome-extension://odlomjlbamekndcpllcnffbgeohgkmjh/"
-    )
+    allowed_origins = @("chrome-extension://$ExtensionId/")
 }
-$hostJson | ConvertTo-Json -Depth 5 | Set-Content $hostManifest -Encoding UTF8
-Write-Host "  -> Native Host manifest actualizado." -ForegroundColor DarkGray
+Write-Utf8NoBom $hostManifest ($hostJson | ConvertTo-Json -Depth 5)
+Write-Host "  -> Native Host manifest actualizado ($NativeHostName)." -ForegroundColor DarkGray
 
 # Configurar hook dinamico en home/config.toml
 $notifyExe = (Join-Path $InstallDir "runtime\bin\node_modules\@oai\sky\bin\windows\codex-computer-use.exe")
 $configTomlContent = "notify = ['$($notifyExe.Replace('\', '\\'))', `"turn-ended`"]`n"
-Set-Content -Path (Join-Path $homeDir "config.toml") -Value $configTomlContent -Encoding UTF8
+Write-Utf8NoBom (Join-Path $homeDir "config.toml") $configTomlContent
 
 # Actualizar mcp_config.json del proyecto
 $mcpConfigFile = Join-Path $InstallDir "mcp_config.json"
@@ -92,49 +119,66 @@ $browserServicePosix = (Join-Path $browserDir "browser-service.mjs").Replace("\"
 
 $trustedServices = '{"browser":"' + $browserServicePosix + '","sky":"@oai/sky/service"}'
 
+$runtimeEnv = [ordered]@{
+    CODEX_HOME = $homeDir
+    NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS = "1000"
+    NODE_REPL_NODE_MODULE_DIRS = $nodeModules
+    NODE_REPL_NODE_PATH = $nodeExe
+    NODE_REPL_TRUSTED_CODE_PATHS = "$homeDir;$nodeModules;$browserDir"
+    NODE_REPL_TRUSTED_SERVICES = $trustedServices
+    SKY_CUA_NATIVE_PIPE = "0"
+    SKY_CUA_NATIVE_PIPE_DIRECTORY = "\\.\pipe\codex-computer-use-149f0122-3721-4a5a-883d-38d414b0ec25"
+    BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
+    BROWSER_USE_TINYSKY_ENABLED = "1"
+    BROWSER_USE_SECURITY_MODE = "disabled-for-local-testing"
+    BROWSER_USE_FULL_CDP_ACCESS_ENABLED = "1"
+    # Clave de la independencia: sin red ambiental no se pide identidad/token de
+    # OpenAI ni se envian datos de telemetria fuera del equipo.
+    BROWSER_USE_DISABLE_AMBIENT_NETWORK = "1"
+    BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
+    BROWSER_USE_CODEX_APP_VERSION = "26.915.31945"
+}
+
 $mcpConfig = @{
     mcpServers = @{
         "computer-user" = @{
             command = $nodeReplExe
             args = @("--disable-sandbox")
-            env = @{
-                CODEX_HOME = $homeDir
-                NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS = "1000"
-                NODE_REPL_NODE_MODULE_DIRS = $nodeModules
-                NODE_REPL_NODE_PATH = $nodeExe
-                NODE_REPL_TRUSTED_CODE_PATHS = "$homeDir;$nodeModules;$browserDir"
-                NODE_REPL_TRUSTED_SERVICES = $trustedServices
-                SKY_CUA_NATIVE_PIPE = "0"
-                SKY_CUA_NATIVE_PIPE_DIRECTORY = "\\.\pipe\codex-computer-use-149f0122-3721-4a5a-883d-38d414b0ec25"
-                BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
-                BROWSER_USE_TINYSKY_ENABLED = "1"
-                BROWSER_USE_SECURITY_MODE = "disabled-for-local-testing"
-                BROWSER_USE_FULL_CDP_ACCESS_ENABLED = "1"
-                BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
-                BROWSER_USE_CODEX_APP_VERSION = "26.915.31945"
-            }
+            env = $runtimeEnv
         }
     }
 }
-$mcpConfig | ConvertTo-Json -Depth 6 | Set-Content $mcpConfigFile -Encoding UTF8
+Write-Utf8NoBom $mcpConfigFile ($mcpConfig | ConvertTo-Json -Depth 6)
 Write-Host "  -> mcp_config.json local actualizado." -ForegroundColor DarkGray
 
 # 3. Registrar Native Messaging Host en Windows Registry (Chrome, Brave, Edge)
 Write-Host "[3/7] Registrando Native Messaging Host en navegadores..." -ForegroundColor Gray
-$regTargets = @(
-    "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.openai.codexextension",
-    "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.openai.codexextension",
-    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.openai.codexextension"
+$browserRegRoots = @(
+    "HKCU:\Software\Google\Chrome\NativeMessagingHosts",
+    "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts"
 )
 
-foreach ($r in $regTargets) {
-    $parent = Split-Path $r
-    if (-not (Test-Path $parent)) {
-        New-Item -Path $parent -ItemType Directory -Force | Out-Null
+foreach ($root in $browserRegRoots) {
+    if (-not (Test-Path $root)) {
+        New-Item -Path $root -ItemType Directory -Force | Out-Null
     }
-    New-Item -Path $r -Force | Out-Null
-    Set-ItemProperty -Path $r -Name "(default)" -Value $hostManifest
-    Write-Host "  [OK] $r" -ForegroundColor Green
+
+    # Limpiar el nombre heredado SOLO si apunta a nuestra propia instalacion,
+    # para no tocar nunca el native host de la app Codex.
+    $legacyKey = Join-Path $root $LegacyHostName
+    if (Test-Path $legacyKey) {
+        $legacyValue = (Get-ItemProperty -Path $legacyKey -ErrorAction SilentlyContinue).'(default)'
+        if ($legacyValue -and ($legacyValue -like "$InstallDir*")) {
+            Remove-Item -Path $legacyKey -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "  [OK] Entrada heredada eliminada: $legacyKey" -ForegroundColor DarkGray
+        }
+    }
+
+    $regKey = Join-Path $root $NativeHostName
+    New-Item -Path $regKey -Force | Out-Null
+    Set-ItemProperty -Path $regKey -Name "(default)" -Value $hostManifest
+    Write-Host "  [OK] $regKey" -ForegroundColor Green
 }
 
 # 4. Instalar Skills Globales en ~/.agents
@@ -145,14 +189,16 @@ if (-not (Test-Path $globalSkillsDir)) {
     New-Item -ItemType Directory -Path $globalSkillsDir -Force | Out-Null
 }
 
-$skillNames = @(
-    "free-computer-user",
-    "free-control-chrome",
-    "free-control-brave",
-    "free-control-edge"
-)
+# Retirar skills duplicadas de versiones anteriores
+foreach ($old in $LegacySkills) {
+    $oldDir = Join-Path $globalSkillsDir $old
+    if (Test-Path $oldDir) {
+        Remove-Item -Recurse -Force $oldDir -ErrorAction SilentlyContinue
+        Write-Host "  [OK] Skill duplicada eliminada: $old" -ForegroundColor DarkGray
+    }
+}
 
-foreach ($sName in $skillNames) {
+foreach ($sName in $SkillNames) {
     $destDir = Join-Path $globalSkillsDir $sName
     if (-not (Test-Path $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
@@ -165,7 +211,7 @@ foreach ($sName in $skillNames) {
         Copy-Item -Path $localSkill -Destination $destFile -Force
     } else {
         # Descarga directa a ~/.agents\skills (sin tocar el directorio del motor)
-        $rawUrl = "https://raw.githubusercontent.com/VictorTrab/computerUser/main/skills/$sName/SKILL.md"
+        $rawUrl = "https://raw.githubusercontent.com/VictorTrab/computerUser/master/skills/$sName/SKILL.md"
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             Invoke-WebRequest -Uri $rawUrl -OutFile $destFile -UseBasicParsing -ErrorAction Stop
@@ -175,17 +221,17 @@ foreach ($sName in $skillNames) {
     }
 }
 
-Write-Host "  [OK] Skills disponibles universalmente en ~/.agents\skills (Chrome, Brave, Edge y Escritorio)." -ForegroundColor Green
+Write-Host "  [OK] Skills disponibles universalmente en ~/.agents\skills (escritorio y navegador)." -ForegroundColor Green
 
-# 5. Configurar DeepSeek Harness si existe
+# 5. Configurar DeepSeek Harness si existe (upsert del bloque completo)
 Write-Host "[5/7] Verificando integracion con DeepSeek Harness (dsh)..." -ForegroundColor Gray
 $cordisPatch = Join-Path $env:USERPROFILE ".dsh\profiles\desktop\cordis.patch.yml"
 if (Test-Path $cordisPatch) {
-    $content = Get-Content $cordisPatch -Raw
-    if ($content -notmatch "mcp-computer-user") {
-        Write-Host "  -> Registrando plugin en cordis.patch.yml..." -ForegroundColor Cyan
-        $mcpBlock = @"
+    $envYaml = ($runtimeEnv.GetEnumerator() | ForEach-Object {
+        "      {0}: '{1}'" -f $_.Key, ($_.Value -replace "'", "''")
+    }) -join "`n"
 
+    $mcpBlock = @"
 - id: mcp-computer-user
   name: "@deepseek-ai/dsh-mcp-client"
   config:
@@ -195,25 +241,17 @@ if (Test-Path $cordisPatch) {
     args:
       - "--disable-sandbox"
     env:
-      CODEX_HOME: '$homeDir'
-      NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS: "1000"
-      NODE_REPL_NODE_MODULE_DIRS: '$nodeModules'
-      NODE_REPL_NODE_PATH: '$nodeExe'
-      NODE_REPL_TRUSTED_CODE_PATHS: '$homeDir;$nodeModules;$browserDir'
-      NODE_REPL_TRUSTED_SERVICES: '$trustedServices'
-      SKY_CUA_NATIVE_PIPE: "0"
-      SKY_CUA_NATIVE_PIPE_DIRECTORY: '\\.\pipe\codex-computer-use-149f0122-3721-4a5a-883d-38d414b0ec25'
-      BROWSER_USE_AVAILABLE_BACKENDS: "chrome,iab"
-      BROWSER_USE_TINYSKY_ENABLED: "1"
-      BROWSER_USE_SECURITY_MODE: "disabled-for-local-testing"
-      BROWSER_USE_FULL_CDP_ACCESS_ENABLED: "1"
-      BROWSER_USE_CODEX_APP_BUILD_FLAVOR: "prod"
-      BROWSER_USE_CODEX_APP_VERSION: "26.915.31945"
+$envYaml
 "@
-        Add-Content -Path $cordisPatch -Value $mcpBlock -Encoding UTF8
-        Write-Host "  [OK] DeepSeek Harness configurado exitosamente." -ForegroundColor Green
+
+    $content = Get-Content $cordisPatch -Raw
+    if ($content -match '(?ms)^- id: mcp-computer-user\s*$') {
+        $updated = [regex]::Replace($content, '(?ms)^- id: mcp-computer-user.*?(?=^- id: |\z)', ($mcpBlock + "`n`n"))
+        Write-Utf8NoBom $cordisPatch $updated
+        Write-Host "  [OK] Bloque mcp-computer-user actualizado en cordis.patch.yml." -ForegroundColor Green
     } else {
-        Write-Host "  [OK] Ya estaba configurado en DeepSeek Harness." -ForegroundColor DarkGray
+        Write-Utf8NoBom $cordisPatch ($content + "`n" + $mcpBlock)
+        Write-Host "  [OK] DeepSeek Harness configurado exitosamente." -ForegroundColor Green
     }
 } else {
     Write-Host "  (DeepSeek Harness no detectado, se omite)." -ForegroundColor DarkGray
@@ -223,20 +261,17 @@ if (Test-Path $cordisPatch) {
 Write-Host "[6/7] Verificando integracion con Antigravity..." -ForegroundColor Gray
 $antigravityMcpConfig = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
 if (Test-Path (Split-Path $antigravityMcpConfig)) {
-    if (Test-Path $antigravityMcpConfig) {
-        try {
+    try {
+        if (Test-Path $antigravityMcpConfig) {
             $existing = Get-Content $antigravityMcpConfig -Raw | ConvertFrom-Json
-            if (-not $existing.mcpServers."computer-user") {
-                $existing.mcpServers | Add-Member -MemberType NoteProperty -Name "computer-user" -Value $mcpConfig.mcpServers."computer-user"
-                $existing | ConvertTo-Json -Depth 6 | Set-Content $antigravityMcpConfig -Encoding UTF8
-                Write-Host "  [OK] Anadido al mcp_config.json de Antigravity." -ForegroundColor Green
-            }
-        } catch {
-            Write-Host "  (Nota: Revisa ~/.gemini/antigravity/mcp_config.json para agregar computer-user manualmente si es necesario)." -ForegroundColor DarkYellow
+        } else {
+            $existing = [pscustomobject]@{ mcpServers = [pscustomobject]@{} }
         }
-    } else {
-        $mcpConfig | ConvertTo-Json -Depth 6 | Set-Content $antigravityMcpConfig -Encoding UTF8
-        Write-Host "  [OK] Creado ~/.gemini/antigravity/mcp_config.json." -ForegroundColor Green
+        $existing.mcpServers | Add-Member -MemberType NoteProperty -Name "computer-user" -Value $mcpConfig.mcpServers."computer-user" -Force
+        Write-Utf8NoBom $antigravityMcpConfig ($existing | ConvertTo-Json -Depth 6)
+        Write-Host "  [OK] computer-user registrado en Antigravity." -ForegroundColor Green
+    } catch {
+        Write-Host "  (Nota: Revisa ~/.gemini/antigravity/mcp_config.json para agregar computer-user manualmente si es necesario)." -ForegroundColor DarkYellow
     }
 }
 
@@ -262,10 +297,11 @@ Write-Host "  free-computer-user doctor      (Verifica estado de salud)" -Foregr
 Write-Host "  free-computer-user update      (Actualiza a la ultima version)" -ForegroundColor White
 Write-Host "  free-computer-user uninstall   (Desinstala limpiamente)" -ForegroundColor White
 Write-Host ""
-Write-Host "Carga la extension en Chrome o Brave si aun no lo has hecho:" -ForegroundColor Yellow
-Write-Host "  1. Entra a chrome://extensions o brave://extensions"
+Write-Host "Carga la extension (una vez por navegador) si aun no lo has hecho:" -ForegroundColor Yellow
+Write-Host "  1. Entra a chrome://extensions, brave://extensions o edge://extensions"
 Write-Host "  2. Activa 'Modo Desarrollador'."
-Write-Host "  3. Carga descomprimida: $InstallDir\extension"
+Write-Host "  3. 'Cargar descomprimida' -> $InstallDir\extension"
+Write-Host "     (ID esperado: $ExtensionId)"
 Write-Host ""
 
 # Ejecutar doctor al finalizar

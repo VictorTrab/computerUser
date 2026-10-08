@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Motor autónomo independiente de Computer Use (Windows UI Automation) y Control de Navegador (Chrome & Brave) para cualquier agente de IA.</strong>
+  <strong>Motor autónomo independiente de Computer Use (Windows UI Automation) y Control de Navegador (Chrome, Brave y Edge) para cualquier agente de IA.</strong>
 </p>
 
 <p align="center">
@@ -18,15 +18,30 @@
 
 ---
 
+## Independiente por diseño
+
+- **No requiere cuenta, token ni la app de Codex/OpenAI.** El runtime arranca en modo offline
+  (`BROWSER_USE_DISABLE_AMBIENT_NETWORK=1`): no pide identidad, no envía telemetría y no hace
+  llamadas a `chatgpt.com`.
+- **Identidad propia**, sin colisiones con la extensión oficial: native host `com.victortrab.computeruser`
+  y extensión con su propio ID (`hjfjdiahpgemdghjcnjmcdkdeapgplpd`), derivado de la clave pública
+  del manifiesto. Nunca se escribe en las claves de registro de Codex.
+- **Una sola skill de navegador** (`free-control-browser`) que cubre Chrome, Brave y Edge, con
+  Chrome como navegador por defecto y selección explícita por instrucción del usuario.
+
+---
+
 ## Instalación
 
 En una terminal de PowerShell, ejecuta:
 
 ```powershell
-irm https://raw.githubusercontent.com/VictorTrab/computerUser/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/VictorTrab/computerUser/master/scripts/install.ps1 | iex
 ```
 
-El instalador descarga el paquete optimizado desde GitHub Releases, registra el Native Messaging Host en los navegadores, despliega las skills en `~/.agents/skills` y configura el servidor MCP en los arneses detectados.
+El instalador descarga el paquete optimizado desde GitHub Releases, registra el Native Messaging Host
+(`com.victortrab.computeruser`) en los navegadores, despliega las skills en `~/.agents/skills`,
+sincroniza el shim `browser` y configura el servidor MCP en los arneses detectados.
 
 ---
 
@@ -49,15 +64,20 @@ Disponible en PowerShell o CMD una vez instalado:
 
 ---
 
-## Cargar la Extensión en Chrome o Brave
+## Cargar la Extensión (una vez por navegador)
 
-1. Abre `chrome://extensions` o `brave://extensions`.
+1. Abre `chrome://extensions`, `brave://extensions` o `edge://extensions`.
 2. Activa el modo de desarrollador.
 3. Haz clic en "Cargar descomprimida" y selecciona:
    ```text
    C:\Users\<TuUsuario>\.free-computer-user\extension
    ```
-4. En los detalles de la extensión, activa "Permitir acceso a URLs de archivo".
+4. Verifica que el ID sea `hjfjdiahpgemdghjcnjmcdkdeapgplpd` (si no coincide, el native host
+   rechazará la conexión; ejecuta `free-computer-user doctor`).
+5. En los detalles de la extensión, activa "Permitir acceso a URLs de archivo".
+
+El puente funcional es el navegador donde cargues la extensión y que esté abierto: el agente usará
+**Chrome por defecto** o el que le indiques explícitamente ("en Brave", "usa Edge").
 
 ---
 
@@ -70,10 +90,10 @@ Solicita las tareas directamente en lenguaje natural desde el chat de tu agente:
 - "Abre la calculadora de Windows y suma 45 + 12."
 - "Captura el estado de la ventana activa y haz clic en Iniciar Sesión."
 
-### Navegador (`free-control-chrome`)
-- "Revisa las pestañas abiertas en Chrome."
-- "Navega a file:///C:/proyectos/docs/index.html y resume el contenido."
-- "Haz clic en el botón de búsqueda e introduce la consulta."
+### Navegador (`free-control-browser`)
+- "Revisa las pestañas abiertas en Chrome." (por defecto)
+- "Abre YouTube en Brave y busca este tema."
+- "En Edge, entra a `file:///C:/proyectos/docs/index.html` y resume el contenido."
 
 ---
 
@@ -86,30 +106,58 @@ free-computer-user/
 │   └── free-computer-user.ps1     # CLI de administración en PowerShell
 ├── runtime/
 │   ├── bin/                       # Servidor MCP Stdio (node_repl.exe) y runtime Node
-│   ├── browser/                   # Scripts de automatización web
+│   │   └── node_modules/browser/  # Shim: permite `await import("browser")`
+│   ├── browser/                   # Servicio de automatización web (parche local propio)
 │   └── extension-host/            # Host nativo de mensajería para navegadores
-├── extension/                     # Extensión Manifest V3 para Chrome, Brave y Edge
+├── extension/                     # Extensión Manifest V3 (ID propio) para Chrome, Brave y Edge
 ├── home/
+│   ├── config.toml                # Hook de fin de turno
 │   └── computer-use/config.toml   # Allowlist de aplicaciones autorizadas
 ├── skills/
 │   ├── free-computer-user/        # Guía técnica para automatización de escritorio
-│   └── free-control-chrome/       # Guía técnica para control de navegador
+│   └── free-control-browser/      # Guía única para Chrome, Brave y Edge
 ├── rules/
 │   └── AGENTS.md                  # Políticas de ejecución y gobernanza operativa
+├── launch/
+│   ├── run_mcp.ps1                # Lanzador de consola con el entorno completo
+│   └── run_mcp.cmd
 ├── scripts/
 │   ├── install.ps1                # Instalador universal
 │   ├── update.ps1                 # Actualizador
 │   ├── uninstall.ps1              # Desinstalador
 │   ├── doctor.ps1                 # Verificador de diagnóstico
-│   └── package.ps1                # Empaquetador CI/CD
+│   ├── smoke-test.ps1             # Smoke test del puente (sin navegador real)
+│   ├── smoke-browser-bridge.mjs
+│   └── package.ps1                # Empaquetador CI/CD (valida + empaqueta)
 └── adapters/
     └── universal_runner.py        # Runner CLI para pruebas directas
 ```
 
 ---
 
+## Verificación antes de publicar
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
+```
+
+El smoke test levanta el `node_repl.exe` real y el `extension-host.exe` real, se hace pasar por la
+extensión (native messaging) y comprueba de extremo a extremo:
+
+- que `await import("browser")` resuelve (shim dentro de `node_modules`);
+- que el runtime funciona con un `CODEX_HOME` **sin** `auth.json` (sin token ni red);
+- que `tabs.list()`, `user.openTabs()` y `nameSession()` responden.
+
+`scripts/package.ps1` lo ejecuta automáticamente antes de empaquetar, así que ningún release puede
+salir con el puente roto.
+
+---
+
 ## Seguridad y Aislamiento
 
 - **Control de procesos:** La lista blanca en `home/computer-use/config.toml` restringe los ejecutables sobre los cuales el motor puede interactuar.
-- **Sin telemetría externa:** El Native Messaging Host corre localmente vía Stdio (`127.0.0.1`). No realiza llamadas a servidores de terceros.
+- **Sin telemetría externa:** el modo offline desactiva la red ambiental; el único tráfico es el que
+  genere la propia navegación del usuario.
 - **Sesión real:** Interactúa con tus navegadores y ventanas locales existentes sin necesidad de exponer puertos remotos de depuración.
+- **Sin tocar Codex:** el instalador usa su propio native host y su propia extensión; las claves y
+  archivos de la app Codex nunca se modifican.

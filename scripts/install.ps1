@@ -27,10 +27,15 @@ Write-Host "   Windows Desktop Automation & Browser Bridge via MCP    " -Foregro
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
+# $PSScriptRoot llega VACIO cuando el script se ejecuta con `irm ... | iex`,
+# asi que nunca se usa directamente: se normaliza aqui.
+$ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { $null }
+$RepoRawBase = "https://raw.githubusercontent.com/VictorTrab/computerUser/master"
+
 # 1. Determinar directorio de instalacion
 if (-not $InstallDir) {
-    if (Test-Path "$PSScriptRoot\..\runtime") {
-        $InstallDir = (Resolve-Path "$PSScriptRoot\..").Path
+    if ($ScriptRoot -and (Test-Path (Join-Path $ScriptRoot "..\runtime"))) {
+        $InstallDir = (Resolve-Path (Join-Path $ScriptRoot "..")).Path
     } else {
         $InstallDir = Join-Path $env:USERPROFILE ".free-computer-user"
     }
@@ -205,13 +210,13 @@ foreach ($sName in $SkillNames) {
     }
     $destFile = Join-Path $destDir "SKILL.md"
 
-    # Buscar origen local (ej. repositorio clonado)
-    $localSkill = Join-Path $PSScriptRoot "..\skills\$sName\SKILL.md"
-    if (Test-Path $localSkill) {
+    # Buscar origen local (ej. repositorio clonado); con `iex` no hay origen local
+    $localSkill = if ($ScriptRoot) { Join-Path $ScriptRoot "..\skills\$sName\SKILL.md" } else { $null }
+    if ($localSkill -and (Test-Path $localSkill)) {
         Copy-Item -Path $localSkill -Destination $destFile -Force
     } else {
         # Descarga directa a ~/.agents\skills (sin tocar el directorio del motor)
-        $rawUrl = "https://raw.githubusercontent.com/VictorTrab/computerUser/master/skills/$sName/SKILL.md"
+        $rawUrl = "$RepoRawBase/skills/$sName/SKILL.md"
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             Invoke-WebRequest -Uri $rawUrl -OutFile $destFile -UseBasicParsing -ErrorAction Stop

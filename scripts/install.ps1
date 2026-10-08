@@ -17,7 +17,7 @@ if (-not $InstallDir) {
     if (Test-Path "$PSScriptRoot\..\runtime") {
         $InstallDir = (Resolve-Path "$PSScriptRoot\..").Path
     } else {
-        $InstallDir = Join-Path $env:USERPROFILE ".agents\computerUser"
+        $InstallDir = Join-Path $env:USERPROFILE ".free-computer-user"
     }
 }
 

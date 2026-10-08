@@ -71,13 +71,22 @@ if (Test-Path $antigravityMcpConfig) {
 
 # 5. Remover comando del PATH del Usuario
 Write-Host "[5/5] Removiendo 'free-computer-user' del PATH de Windows..." -ForegroundColor Gray
-$InstallDir = (Resolve-Path "$PSScriptRoot\..").Path
-$cliBinDir = Join-Path $InstallDir "bin"
+$pathsToRemove = @(
+    (Join-Path (Resolve-Path "$PSScriptRoot\..").Path "bin"),
+    (Join-Path $env:USERPROFILE ".free-computer-user\bin"),
+    (Join-Path $env:USERPROFILE ".agents\computerUser\bin")
+)
 $currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($currentUserPath -split ';' -contains $cliBinDir) {
-    $newPath = ($currentUserPath -split ';' | Where-Object { $_ -ne $cliBinDir }) -join ';'
-    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    Write-Host "  [OK] Removido del PATH de Windows." -ForegroundColor Green
+$pathList = $currentUserPath -split ';' | Where-Object { $pathsToRemove -notcontains $_ -and $_ }
+[Environment]::SetEnvironmentVariable("Path", ($pathList -join ';'), "User")
+Write-Host "  [OK] Removido del PATH de Windows." -ForegroundColor Green
+
+if ($PurgeFiles) {
+    $engineFolder = Join-Path $env:USERPROFILE ".free-computer-user"
+    if (Test-Path $engineFolder) {
+        Remove-Item -Recurse -Force $engineFolder
+        Write-Host "  [OK] Eliminada carpeta del motor: $engineFolder" -ForegroundColor Green
+    }
 }
 
 Write-Host ""

@@ -71,7 +71,7 @@ free-computer-user uninstall
 2. Activa el **«Modo Desarrollador»** (interruptor arriba a la derecha).
 3. Haz clic en **«Cargar descomprimida»** y selecciona la carpeta:
    ```text
-   C:\Users\<TuUsuario>\.agents\computerUser\extension
+   C:\Users\<TuUsuario>\.free-computer-user\extension
    ```
    *(o la carpeta `extension/` dentro de donde clonaste el repo)*.
 4. En la tarjeta de **ComputerUser Browser Bridge**, entra en **Detalles** y activa **«Permitir acceso a URLs de archivo»**.

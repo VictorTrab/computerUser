@@ -12,7 +12,12 @@ $RootDir = (Resolve-Path "$PSScriptRoot\..").Path
 
 if (-not $OutputDir) {
     $OutputDir = Join-Path $RootDir "dist"
+} else {
+    if (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
+        $OutputDir = Join-Path $RootDir $OutputDir
+    }
 }
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
@@ -72,6 +77,25 @@ $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
 $psi.CreateNoWindow = $true
 
+# Variables de entorno requeridas por el runtime para ejecucion en entornos aislados de CI
+$psi.EnvironmentVariables["CODEX_HOME"] = Join-Path $RootDir "home"
+$psi.EnvironmentVariables["NODE_REPL_NODE_PATH"] = Join-Path $RootDir "runtime\bin\node.exe"
+$psi.EnvironmentVariables["NODE_REPL_NODE_MODULE_DIRS"] = Join-Path $RootDir "runtime\bin\node_modules"
+$psi.EnvironmentVariables["NODE_REPL_TRUSTED_CODE_PATHS"] = "$RootDir\home;$RootDir\runtime\bin\node_modules;$RootDir\runtime\browser"
+$psi.EnvironmentVariables["NODE_REPL_TRUSTED_SERVICES"] = "{`"browser`":`"$($RootDir.Replace('\', '/'))/runtime/browser/browser-service.mjs`",`"sky`":`"@oai/sky/service`"}"
+$psi.EnvironmentVariables["BROWSER_USE_AVAILABLE_BACKENDS"] = "chrome,iab"
+$psi.EnvironmentVariables["BROWSER_USE_TINYSKY_ENABLED"] = "1"
+$psi.EnvironmentVariables["BROWSER_USE_CODEX_APP_BUILD_FLAVOR"] = "prod"
+$psi.EnvironmentVariables["BROWSER_USE_CODEX_APP_VERSION"] = "26.915.31945"
+$psi.EnvironmentVariables["BROWSER_USE_FULL_CDP_ACCESS_ENABLED"] = "1"
+$psi.EnvironmentVariables["BROWSER_USE_SECURITY_MODE"] = "disabled-for-local-testing"
+$psi.EnvironmentVariables["SKY_CUA_NATIVE_PIPE"] = "0"
+$psi.EnvironmentVariables["NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS"] = "1000"
+
+if ($env:TEMP) { $psi.EnvironmentVariables["TEMP"] = $env:TEMP }
+if ($env:TMP) { $psi.EnvironmentVariables["TMP"] = $env:TMP }
+if ($env:USERPROFILE) { $psi.EnvironmentVariables["USERPROFILE"] = $env:USERPROFILE }
+
 $proc = [System.Diagnostics.Process]::Start($psi)
 $proc.StandardInput.WriteLine($handshakeJson)
 $proc.StandardInput.Flush()
@@ -88,12 +112,18 @@ while ($sw.ElapsedMilliseconds -lt 6000 -and (-not $proc.HasExited)) {
     }
     Start-Sleep -Milliseconds 100
 }
+
+$hasExited = $proc.HasExited
+$errText = ""
+if ($hasExited) {
+    try { $errText = $proc.StandardError.ReadToEnd() } catch {}
+}
 try { $proc.Kill() } catch {}
 
 if ($response -match '"result"') {
     Write-Host "  [OK] Handshake MCP respondio correctamente con JSON-RPC 2.0." -ForegroundColor Green
 } else {
-    throw "Fallo en el smoke test de node_repl.exe: No respondio al handshake MCP."
+    throw "Fallo en el smoke test de node_repl.exe: No respondio al handshake MCP. ExitCode: $($proc.ExitCode). StdErr: $errText"
 }
 
 # 2. Preparar directorio temporal de empaquetado

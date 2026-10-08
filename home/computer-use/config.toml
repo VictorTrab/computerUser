@@ -1,2 +1,47 @@
 [apps]
-allowed = ["brave.exe", "chrome.exe", "msedge.exe", "python.exe", "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", "code.exe"]
+allowed = [
+    # Navegadores
+    "chrome.exe",
+    "brave.exe",
+    "msedge.exe",
+    "firefox.exe",
+
+    # Editores, IDEs y Terminales
+    "code.exe",
+    "cursor.exe",
+    "notepad.exe",
+    "notepad++.exe",
+    "WindowsTerminal.exe",
+    "cmd.exe",
+    "powershell.exe",
+
+    # Entornos y Lenguajes
+    "python.exe",
+    "node.exe",
+
+    # Ofimática y Productividad
+    "excel.exe",
+    "winword.exe",
+    "powerpnt.exe",
+    "outlook.exe",
+    "onenote.exe",
+
+    # Comunicación y Colaboración
+    "slack.exe",
+    "discord.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "telegram.exe",
+    "whatsapp.exe",
+
+    # Utilidades y Multimedia
+    "spotify.exe",
+    "vlc.exe",
+    "mspaint.exe",
+    "calc.exe",
+
+    # Apps Modernas de Windows (UWP / MSIX)
+    "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+    "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+    "Microsoft.Paint_8wekyb3d8bbwe!App"
+]

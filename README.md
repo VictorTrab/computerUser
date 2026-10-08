@@ -108,7 +108,10 @@ free-computer-user/
 │   ├── bin/                       # Servidor MCP Stdio (node_repl.exe) y runtime Node
 │   │   └── node_modules/browser/  # Shim: permite `await import("browser")`
 │   ├── browser/                   # Servicio de automatización web (parche local propio)
-│   └── extension-host/            # Host nativo de mensajería para navegadores
+│   └── extension-host/            # Host nativo de mensajería PROPIO (ya no es el de Codex)
+│       ├── windows/x64/extension-host.exe   # Lanzador nativo (el `path` del manifiesto)
+│       ├── src/host.mjs                     # El host: pipe + framing + puente JSON-RPC
+│       └── launcher/                        # Fuente Rust + build.ps1 del lanzador
 ├── extension/                     # Extensión Manifest V3 (ID propio) para Chrome, Brave y Edge
 ├── home/
 │   ├── config.toml                # Hook de fin de turno
@@ -141,7 +144,7 @@ free-computer-user/
 powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
 ```
 
-El smoke test levanta el `node_repl.exe` real y el `extension-host.exe` real, se hace pasar por la
+El smoke test levanta el `node_repl.exe` real y **nuestro** `extension-host.exe`, se hace pasar por la
 extensión (native messaging) y comprueba de extremo a extremo:
 
 - que `await import("browser")` resuelve (shim dentro de `node_modules`);
@@ -149,7 +152,52 @@ extensión (native messaging) y comprueba de extremo a extremo:
 - que `tabs.list()`, `user.openTabs()` y `nameSession()` responden.
 
 `scripts/package.ps1` lo ejecuta automáticamente antes de empaquetar, así que ningún release puede
-salir con el puente roto.
+salir con el puente roto. Si tienes Chrome/Brave abiertos con la extensión cargada, ciérralos antes:
+el runtime descubre los pipes vivos de esos navegadores y el smoke puede no ser concluyente.
+
+---
+
+## Host nativo propio
+
+El host de mensajería nativa (`runtime\extension-host\`) es **nuestro**, no el binario de Codex
+(`extension-host.exe` de `@oai`). Está formado por:
+
+- `windows\x64\extension-host.exe` — lanzador nativo (Rust, ~240 KB) que arranca `src\host.mjs` con
+  el `node.exe` del runtime heredando los pipes del navegador. El navegador necesita una imagen
+  ejecutable: `CreateProcessW` no puede lanzar un `.cmd` ni un `.mjs`.
+- `src\host.mjs` (+ `framing.mjs`, `trace.mjs`) — el host: crea el named pipe
+  `\\.\pipe\codex-browser-use\<uuid4>`, habla `uint32LE + UTF-8 JSON` con el navegador por stdio y
+  hace de puente JSON-RPC 2.0 con `node_repl.exe`, con reescritura de ids
+  (`native-host:<cliente>:<id>`) y el namespace host-local `codexRuntime/*`.
+
+**Qué se pierde con él** (limitaciones conocidas y aceptadas):
+
+- El **sidepanel de Codex no arranca**: no está implementado el proxy WebSocket al app-server, así
+  que `codexRuntime/ensure` responde `no_matching_codex_install`.
+- No implementa `codexRuntime/tabContextAsset/*`, `openLocalFile`, la noción de sesión
+  (`metadata.codexSessionId`), la ACL del named pipe (ni su secreto por sesión) ni la firma de
+  código del `.exe`.
+
+El puente navegador↔runtime —que es lo que usan las skills— es completo y está validado 9/9 en
+Chrome y en Brave con la extensión real.
+
+**Trazas de protocolo.** El host escribe por defecto un JSONL con todos los frames que cruzan en
+`runtime\extension-host\logs\host-<pid>.jsonl` (es el material con el que se depuró el protocolo).
+Para llevarlas a otro sitio o silenciarlas: define `CU_HOST_TRACE` (una ruta, o `NUL` para
+descartarlas) o pasa `--trace=<fichero>`. `--quiet` solo reduce el chárter de stderr; la traza sigue.
+Las trazas son estado, no configuración: borrar `runtime\extension-host\logs\` es seguro.
+
+**Reversión al binario de Codex** (se conserva, no se borra):
+
+```powershell
+# repo y/o instalación
+Copy-Item runtime\extension-host\windows\x64\extension-host.exe.bak-codex `
+          runtime\extension-host\windows\x64\extension-host.exe -Force
+```
+
+En la instalación la ruta es `C:\Users\User\.free-computer-user\runtime\extension-host\windows\x64\`.
+El manifiesto y las claves del registro **no cambian** al revertir (el `path` es el mismo).
+Recompilar el lanzador propio: `runtime\extension-host\launcher\build.ps1`.
 
 ---
 

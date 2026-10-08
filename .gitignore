@@ -33,6 +33,16 @@ dist/
 .identity/
 # Generados por el instalador / runtime (no versionar)
 runtime/bin/node_modules/browser/browser-client.mjs
+runtime/bin/node_modules/@computer-user/sky-guard/index.mjs
+runtime/bin/node_modules/@computer-user/sky-guard/package.json
 runtime/extension-host/com.victortrab.computeruser.json
 runtime/extension-host/com.openai.codexextension.json
 home/skills/
+
+# Host nativo propio: artefactos del compilador y trazas de protocolo en runtime
+runtime/extension-host/logs/
+runtime/extension-host/**/*.pdb
+# Respaldos de binarios (nunca al repo ni al paquete: contienen binarios de Codex)
+*.bak-overlay
+*.bak-codex
+*.bak

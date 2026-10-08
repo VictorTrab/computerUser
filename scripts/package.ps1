@@ -25,6 +25,33 @@ Write-Host "       EMPAQUETADOR Y VALIDADOR DE INTEGRIDAD CI/CD       " -Foregro
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
+# node.exe del runtime: lo usan las validaciones y el smoke test.
+$nodeExe = Join-Path $RootDir "runtime\bin\node.exe"
+
+# Patron unico de "respaldo de binario": *.bak, *.bak-<sufijo> (.bak-overlay),
+# *.bak_<sufijo>, *.bak.<sufijo>. Nada que case con esto viaja en el release.
+$BackupRegex = '\.bak([-._]|$)'
+
+function Get-ZipEntryNames {
+    param([string]$ZipPath)
+    # Inspecciona el zip SIN extraerlo. System.IO.Compression primero (no depende
+    # de utilidades externas); si no estuviera disponible, tar.exe -tf.
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+        try {
+            return @($zip.Entries | ForEach-Object { $_.FullName })
+        } finally {
+            $zip.Dispose()
+        }
+    } catch {
+        if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
+            return @(& tar.exe -tf $ZipPath)
+        }
+        throw "No se pudo inspeccionar el contenido del zip: $_"
+    }
+}
+
 # 1. Validaciones de Integridad (Smoke Tests)
 Write-Host "[1/4] Ejecutando validaciones de integridad..." -ForegroundColor Cyan
 
@@ -33,6 +60,11 @@ $requiredFiles = @(
     "runtime\bin\node_repl.exe",
     "runtime\bin\node.exe",
     "runtime\extension-host\windows\x64\extension-host.exe",
+    # Host nativo PROPIO: el .exe es solo el lanzador; el host es src\host.mjs y
+    # sus modulos. Sin ellos el navegador arrancaria un host sin script.
+    "runtime\extension-host\src\host.mjs",
+    "runtime\extension-host\src\framing.mjs",
+    "runtime\extension-host\src\trace.mjs",
     "runtime\bin\node_modules\@oai\sky\bin\windows\codex-computer-use.exe",
     "extension\manifest.json",
     "home\computer-use\config.toml",
@@ -40,6 +72,7 @@ $requiredFiles = @(
     "skills\free-control-browser\SKILL.md",
     "rules\AGENTS.md",
     "scripts\smoke-browser-bridge.mjs",
+    "scripts\check-extension-files.mjs",
     "mcp_config.json"
 )
 
@@ -50,6 +83,19 @@ foreach ($f in $requiredFiles) {
     }
 }
 Write-Host "  [OK] Todos los componentes criticos estan presentes." -ForegroundColor Green
+
+# A2. El host nativo empaquetado tiene que ser EL NUESTRO, no el binario de Codex.
+# El lanzador propio lleva grabada la cadena de identidad; el de Codex no.
+Write-Host "  -> Verificando que el host nativo es el lanzador propio..." -ForegroundColor Gray
+$extHostExe = Join-Path $RootDir "runtime\extension-host\windows\x64\extension-host.exe"
+$extHostProbe = ""
+try {
+    $extHostProbe = [string](& $nodeExe -e "const fs=require('fs');const b=fs.readFileSync(process.argv[1]);const m=Buffer.from('ComputerUser native messaging launcher','latin1');process.stdout.write(b.includes(m)?'OWN':'FOREIGN')" $extHostExe 2>$null)
+} catch { $extHostProbe = "" }
+if ($extHostProbe -notmatch 'OWN') {
+    throw "runtime\extension-host\windows\x64\extension-host.exe NO es el lanzador propio (¿binario de Codex?). Compila con runtime\extension-host\launcher\build.ps1"
+}
+Write-Host "  [OK] Host nativo propio (lanzador ComputerUser, no el binario de Codex)." -ForegroundColor Green
 
 # B. Validar sintaxis JSON
 Write-Host "  -> Verificando sintaxis de archivos JSON..." -ForegroundColor Gray
@@ -72,7 +118,6 @@ Write-Host "  [OK] Archivos JSON validos y sin errores de sintaxis." -Foreground
 # C. Validar ejecucion e integridad de binarios nativos
 Write-Host "  -> Verificando ejecutabilidad de runtimes binarios..." -ForegroundColor Gray
 $nodeReplExe = Join-Path $RootDir "runtime\bin\node_repl.exe"
-$nodeExe = Join-Path $RootDir "runtime\bin\node.exe"
 
 $nodeReplHelp = & $nodeReplExe --help 2>&1 | Out-String
 if ($nodeReplHelp -match "node_repl MCP") {
@@ -202,6 +247,38 @@ foreach ($junk in @("home\skills", "home\tmp", "home\.tmp", "home\installation_i
     Remove-Item -Recurse -Force (Join-Path $stageDir $junk) -ErrorAction SilentlyContinue
 }
 
+# Artefactos del host nativo que NO van en el release: el respaldo del binario de
+# Codex no se distribuye (la reversion se hace con el .bak-codex del repo), y ni
+# los simbolos del compilador ni las trazas de protocolo tienen nada que hacer en
+# el paquete.
+$hostStage = Join-Path $stageDir "runtime\extension-host"
+Remove-Item -Force (Join-Path $hostStage "windows\x64\extension-host.exe.bak-codex") -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force (Join-Path $hostStage "logs") -ErrorAction SilentlyContinue
+
+# Respaldo de binarios AJENOS en cualquier punto del arbol. El parche de overlay
+# dejo tres `*.bak-overlay` (los ejecutables ORIGINALES de Codex: @oai/sky x64,
+# @oai/cua y el swift; ~59,6 MB) y la lista fija de exclusiones no los veia.
+# Barrido general por patron, no por lista: *.bak, *.bak-overlay, *.bak_1, *.bak.old
+$backups = @(Get-ChildItem -Path $stageDir -Recurse -File | Where-Object { $_.Name -match $BackupRegex })
+if ($backups.Count -gt 0) {
+    $backupBytes = ($backups | Measure-Object -Property Length -Sum).Sum
+    foreach ($b in $backups) {
+        Write-Host ("  -> excluido del paquete: {0} ({1:N0} bytes)" -f $b.FullName.Replace("$stageDir\", ""), $b.Length) -ForegroundColor DarkGray
+        Remove-Item -Force $b.FullName -ErrorAction SilentlyContinue
+    }
+    Write-Host ("  [OK] {0} respaldo(s) de binarios excluidos del paquete ({1:N2} MB)." -f $backups.Count, ($backupBytes / 1MB)) -ForegroundColor Green
+} else {
+    Write-Host "  [OK] Sin respaldos de binarios en el stage." -ForegroundColor DarkGray
+}
+
+# Simbolos de compilador (*.pdb) y trazas de runtime (cualquier carpeta logs bajo
+# runtime\): estado de desarrollo, nunca contenido de un release.
+$pdbs = @(Get-ChildItem -Path $stageDir -Recurse -File | Where-Object { $_.Name -like "*.pdb" })
+foreach ($p in $pdbs) { Remove-Item -Force $p.FullName -ErrorAction SilentlyContinue }
+$logDirs = @(Get-ChildItem -Path (Join-Path $stageDir "runtime") -Recurse -Directory -Filter "logs" -ErrorAction SilentlyContinue)
+foreach ($d in $logDirs) { Remove-Item -Recurse -Force $d.FullName -ErrorAction SilentlyContinue }
+Write-Host ("  [OK] Host nativo: respaldo, simbolos y trazas excluidos del paquete ({0} .pdb, {1} logs/)." -f $pdbs.Count, $logDirs.Count) -ForegroundColor DarkGray
+
 Write-Host "  [OK] Arbol de stage creado y depurado." -ForegroundColor Green
 
 # 3. Comprimir Release ZIP
@@ -213,6 +290,20 @@ if (-not (Test-Path $OutputDir)) {
 
 $zipName = "free-computer-user-windows-x64.zip"
 $zipPath = Join-Path $OutputDir $zipName
+
+# Guard: el manifest no puede declarar ficheros ausentes (Chrome no carga la
+# extension). Se comprueba el STAGE, que es exactamente lo que se va a comprimir,
+# y se ejecuta SIEMPRE: antes vivia dentro de la rama `else` (solo sin tar.exe),
+# asi que con tar.exe instalado -el caso normal en Windows 10/11- nunca corria.
+# Va ANTES de tocar el zip: si el arbol no es valido, el paquete anterior (bueno)
+# no se destruye.
+Write-Host "  -> Verificando coherencia del manifest de la extension..." -ForegroundColor Gray
+& $nodeExe (Join-Path $RootDir "scripts\check-extension-files.mjs") (Join-Path $stageDir "extension")
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item -Recurse -Force $stageDir -ErrorAction SilentlyContinue
+    throw "El manifest de la extension declara ficheros que no existen; empaquetado abortado."
+}
+
 if (Test-Path $zipPath) {
     Remove-Item -Force $zipPath
 }
@@ -225,11 +316,35 @@ if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
         Pop-Location
     }
 } else {
-# Guard: el manifest no puede declarar ficheros ausentes (Chrome no carga la extension)
-& node (Join-Path $RootDir "scripts\check-extension-files.mjs") (Join-Path $stageDir "extension")
-if ($LASTEXITCODE -ne 0) { throw "El manifest de la extension declara ficheros que no existen." }
     Compress-Archive -Path "$stageDir\*" -DestinationPath $zipPath -CompressionLevel Fastest
 }
+
+# Verificacion del CONTENIDO del zip (no solo del stage): un stage limpio no basta,
+# el paquete tiene que llevar exactamente lo revisado. Aborta si aparece cualquier
+# respaldo de binario, simbolo o traza, o si falta un componente obligatorio.
+Write-Host "  -> Verificando el contenido del zip..." -ForegroundColor Gray
+$zipEntries = @(Get-ZipEntryNames -ZipPath $zipPath | ForEach-Object { ($_ -replace '\\', '/') })
+$forbidden = @($zipEntries | Where-Object {
+    $_ -match $BackupRegex -or $_ -match '\.pdb$' -or $_ -match '(^|/)logs/'
+})
+if ($forbidden.Count -gt 0) {
+    Remove-Item -Recurse -Force $stageDir -ErrorAction SilentlyContinue
+    Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
+    throw ("El zip contiene artefactos que NO deben distribuirse: " + (($forbidden | Select-Object -First 10) -join ", "))
+}
+$mustHaveInZip = @(
+    "runtime/extension-host/windows/x64/extension-host.exe",
+    "runtime/extension-host/src/host.mjs",
+    "extension/manifest.json"
+)
+$missingInZip = @($mustHaveInZip | Where-Object { $zipEntries -notcontains $_ })
+if ($missingInZip.Count -gt 0) {
+    Remove-Item -Recurse -Force $stageDir -ErrorAction SilentlyContinue
+    Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
+    throw ("El zip no contiene componentes obligatorios: " + ($missingInZip -join ", "))
+}
+Write-Host ("  [OK] Zip verificado: {0} entradas, 0 respaldos/simbolos/trazas, host nativo presente." -f $zipEntries.Count) -ForegroundColor Green
+
 $zipSizeMb = [math]::Round(((Get-Item $zipPath).Length / 1MB), 2)
 Write-Host "  [OK] Creado: $zipName ($zipSizeMb MB)" -ForegroundColor Green
 

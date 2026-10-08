@@ -1,5 +1,7 @@
 param(
-    [switch]$PurgeFiles = $false
+    # El borrado de la carpeta de instalacion es el paso 6 y ya no es opcional:
+    # usa -PurgeFiles:$false si quieres desinstalar conservando los ficheros.
+    [switch]$PurgeFiles = $true
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -13,7 +15,7 @@ Write-Host "=== Desinstalador de Free Computer User ===" -ForegroundColor Yellow
 Write-Host ""
 
 # 1. Eliminar registros de Native Messaging Host
-Write-Host "[1/5] Desregistrando Native Messaging Hosts de navegadores..." -ForegroundColor Gray
+Write-Host "[1/6] Desregistrando Native Messaging Hosts de navegadores..." -ForegroundColor Gray
 $browserRegRoots = @(
     "HKCU:\Software\Google\Chrome\NativeMessagingHosts",
     "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
@@ -43,7 +45,7 @@ foreach ($root in $browserRegRoots) {
 }
 
 # 2. Eliminar Skills globales
-Write-Host "[2/5] Eliminando skills de ~/.agents/skills y ~/.dsh/skills..." -ForegroundColor Gray
+Write-Host "[2/6] Eliminando skills de ~/.agents/skills y ~/.dsh/skills..." -ForegroundColor Gray
 $skillNames = @(
     "free-computer-user",
     "free-control-browser",
@@ -67,7 +69,7 @@ foreach ($sp in $skillPaths) {
 }
 
 # 3. Limpiar DeepSeek Harness (cordis.patch.yml)
-Write-Host "[3/5] Limpiando configuracion en DeepSeek Harness..." -ForegroundColor Gray
+Write-Host "[3/6] Limpiando configuracion en DeepSeek Harness..." -ForegroundColor Gray
 $cordisPatch = Join-Path $env:USERPROFILE ".dsh\profiles\desktop\cordis.patch.yml"
 if (Test-Path $cordisPatch) {
     $content = Get-Content $cordisPatch -Raw
@@ -86,7 +88,7 @@ if (Test-Path $cordisPatch) {
 }
 
 # 4. Limpiar Antigravity
-Write-Host "[4/5] Limpiando configuracion en Antigravity..." -ForegroundColor Gray
+Write-Host "[4/6] Limpiando configuracion en Antigravity..." -ForegroundColor Gray
 $antigravityMcpConfig = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
 if (Test-Path $antigravityMcpConfig) {
     try {
@@ -100,7 +102,7 @@ if (Test-Path $antigravityMcpConfig) {
 }
 
 # 5. Remover comando del PATH del Usuario
-Write-Host "[5/5] Removiendo 'free-computer-user' del PATH de Windows..." -ForegroundColor Gray
+Write-Host "[5/6] Removiendo 'free-computer-user' del PATH de Windows..." -ForegroundColor Gray
 $pathsToRemove = @(
     (Join-Path (Resolve-Path "$PSScriptRoot\..").Path "bin"),
     (Join-Path $env:USERPROFILE ".free-computer-user\bin"),
@@ -111,14 +113,47 @@ $pathList = $currentUserPath -split ';' | Where-Object { $pathsToRemove -notcont
 [Environment]::SetEnvironmentVariable("Path", ($pathList -join ';'), "User")
 Write-Host "  [OK] Removido del PATH de Windows." -ForegroundColor Green
 
-if ($PurgeFiles) {
-    $engineFolder = Join-Path $env:USERPROFILE ".free-computer-user"
+# 6. Eliminar la carpeta de instalacion (~/.free-computer-user)
+Write-Host "[6/6] Eliminando la carpeta de instalacion..." -ForegroundColor Gray
+$engineFolder = Join-Path $env:USERPROFILE ".free-computer-user"
+# Solo se borra si la ruta es exactamente la esperada: asi un USERPROFILE
+# inesperado, una junction o un enlace simbolico nunca borran otra carpeta.
+$expectedFolder = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE ".free-computer-user")).TrimEnd('\')
+$purgeFailed = $false
 
-    # Los navegadores dejan vivo un extension-host.exe dentro de la instalacion;
-    # si sigue en ejecucion, el archivo queda bloqueado y el borrado falla en
-    # silencio. Se detienen solo los procesos que corren desde esta carpeta.
-    $running = @()
-    if (Test-Path $engineFolder) {
+if (-not $PurgeFiles) {
+    Write-Host "  (Se conserva ${engineFolder}: se ejecuto con -PurgeFiles:`$false)" -ForegroundColor DarkGray
+} elseif (-not (Test-Path -LiteralPath $engineFolder)) {
+    Write-Host "  [OK] No existe $engineFolder (nada que eliminar)" -ForegroundColor Green
+} else {
+    $resolvedFolder = ""
+    $isReparse = $false
+    try {
+        $engineItem = Get-Item -LiteralPath $engineFolder -Force -ErrorAction Stop
+        # Resolve-Path no sigue las junctions en PowerShell 5.1, asi que se mira
+        # el atributo ReparsePoint para no borrar nunca el destino de un enlace.
+        $isReparse = (($engineItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+        $resolvedFolder = [System.IO.Path]::GetFullPath($engineItem.FullName).TrimEnd('\')
+    } catch {
+        $resolvedFolder = ""
+    }
+
+    if (-not $resolvedFolder -or $isReparse -or ($resolvedFolder -ne $expectedFolder)) {
+        $purgeFailed = $true
+        if ($isReparse) {
+            Write-Host "  [AVISO] $engineFolder es un enlace (junction/symlink) -> $($engineItem.Target)" -ForegroundColor DarkYellow
+            Write-Host "          Un enlace no se borra automaticamente: puede apuntar fuera de la instalacion." -ForegroundColor DarkYellow
+        } else {
+            Write-Host "  [AVISO] Ruta resuelta inesperada: '$resolvedFolder'" -ForegroundColor DarkYellow
+            Write-Host "          Se esperaba exactamente: $expectedFolder" -ForegroundColor DarkYellow
+        }
+        Write-Host "          No se ha borrado nada. Revisa esa carpeta a mano." -ForegroundColor DarkYellow
+    } else {
+        # Los navegadores dejan vivo un extension-host.exe dentro de la instalacion;
+        # si sigue en ejecucion, el archivo queda bloqueado y el borrado falla en
+        # silencio. Se detienen solo los procesos que corren desde esta carpeta.
+        # Orden obligatorio: primero matar procesos, despues borrar.
+        $running = @()
         $running = Get-CimInstance Win32_Process -Filter "Name='extension-host.exe' or Name='node_repl.exe' or Name='node.exe'" -ErrorAction SilentlyContinue |
             Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($engineFolder, [System.StringComparison]::OrdinalIgnoreCase) }
         foreach ($proc in $running) {
@@ -130,22 +165,26 @@ if ($PurgeFiles) {
                 Write-Host "  [AVISO] No se pudo detener $($proc.Name) (PID $($proc.ProcessId)): $_" -ForegroundColor DarkYellow
             }
         }
-    }
 
-    if (Test-Path $engineFolder) {
-        Remove-Item -Recurse -Force $engineFolder -ErrorAction SilentlyContinue
-    }
+        Remove-Item -LiteralPath $engineFolder -Recurse -Force -ErrorAction SilentlyContinue
 
-    if (Test-Path $engineFolder) {
-        $left = Get-ChildItem $engineFolder -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName
-        Write-Host "  [AVISO] No se pudo eliminar por completo $engineFolder" -ForegroundColor DarkYellow
-        Write-Host "          Restos: $($left -join ', ')" -ForegroundColor DarkYellow
-        Write-Host "          Cierra los navegadores y repite, o borra la carpeta a mano." -ForegroundColor DarkYellow
-    } else {
-        Write-Host "  [OK] Eliminada carpeta del motor: $engineFolder" -ForegroundColor Green
+        if (Test-Path -LiteralPath $engineFolder) {
+            # Nunca se dice que fue bien si quedan restos: se listan los primeros.
+            $purgeFailed = $true
+            $left = Get-ChildItem -LiteralPath $engineFolder -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName
+            Write-Host "  [AVISO] No se pudo eliminar por completo $engineFolder" -ForegroundColor DarkYellow
+            Write-Host "          Restos: $($left -join ', ')" -ForegroundColor DarkYellow
+            Write-Host "          Cierra los navegadores y repite, o borra la carpeta a mano." -ForegroundColor DarkYellow
+        } else {
+            Write-Host "  [OK] Eliminada carpeta del motor: $engineFolder" -ForegroundColor Green
+        }
     }
 }
 
 Write-Host ""
-Write-Host "[OK] Desinstalacion completada exitosamente." -ForegroundColor Green
+if ($purgeFailed) {
+    Write-Host "[AVISO] Desinstalacion completada, pero quedan restos en $engineFolder (ver arriba)." -ForegroundColor DarkYellow
+} else {
+    Write-Host "[OK] Desinstalacion completada exitosamente." -ForegroundColor Green
+}
 Write-Host "Nota: Puedes quitar la extension 'Skynet Bridge' desde chrome://extensions haciendo clic en 'Quitar'." -ForegroundColor Yellow

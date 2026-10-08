@@ -10,7 +10,7 @@
                                                          "NODE_REPL_NODE_MODULE_DIRS":  "C:\\Users\\User\\projects\\computerUser\\runtime\\bin\\node_modules",
                                                          "NODE_REPL_NODE_PATH":  "C:\\Users\\User\\projects\\computerUser\\runtime\\bin\\node.exe",
                                                          "NODE_REPL_TRUSTED_CODE_PATHS":  "C:\\Users\\User\\projects\\computerUser\\home;C:\\Users\\User\\projects\\computerUser\\runtime\\bin\\node_modules;C:\\Users\\User\\projects\\computerUser\\runtime\\browser",
-                                                         "NODE_REPL_TRUSTED_SERVICES":  "{\"browser\":\"C:/Users/User/projects/computerUser/runtime/browser/browser-service.mjs\",\"sky\":\"@oai/sky/service\"}",
+                                                         "NODE_REPL_TRUSTED_SERVICES":  "{\"browser\":\"C:/Users/User/projects/computerUser/runtime/browser/browser-service.mjs\",\"sky\":\"@computer-user/sky-guard\"}",
                                                          "SKY_CUA_NATIVE_PIPE":  "0",
                                                          "SKY_CUA_NATIVE_PIPE_DIRECTORY":  "\\\\.\\pipe\\codex-computer-use-149f0122-3721-4a5a-883d-38d414b0ec25",
                                                          "BROWSER_USE_AVAILABLE_BACKENDS":  "chrome,iab",

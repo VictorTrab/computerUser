@@ -76,6 +76,29 @@ if (-not (Test-Path "$InstallDir\runtime\bin\node_repl.exe")) {
 # 2. Normalizar rutas locales en archivos JSON de configuracion
 Write-Host "[2/7] Configurando rutas absolutas para este usuario..." -ForegroundColor Gray
 
+# Guardian del host nativo: el paquete DEBE traer NUESTRO lanzador, no el binario
+# de Codex. Si el paquete viniera con el de Codex, avisamos en vez de instalar un
+# host ajeno en silencio. (Revertir siempre es posible: extension-host.exe.bak-codex)
+$extHostExeRaw = Join-Path $InstallDir "runtime\extension-host\windows\x64\extension-host.exe"
+$extHostSrcRaw = Join-Path $InstallDir "runtime\extension-host\src\host.mjs"
+$ownHostOk = $false
+if ((Test-Path $extHostExeRaw) -and (Test-Path $extHostSrcRaw)) {
+    $probeNode = Join-Path $InstallDir "runtime\bin\node.exe"
+    if (Test-Path $probeNode) {
+        try {
+            $probe = [string](& $probeNode -e "const fs=require('fs');const b=fs.readFileSync(process.argv[1]);const m=Buffer.from('ComputerUser native messaging launcher','latin1');process.stdout.write(b.includes(m)?'OWN':'FOREIGN')" $extHostExeRaw 2>$null)
+            $ownHostOk = ($probe -match 'OWN')
+        } catch { $ownHostOk = $false }
+    }
+}
+if ($ownHostOk) {
+    Write-Host "  [OK] Host nativo propio presente (lanzador + src\host.mjs)." -ForegroundColor Green
+} else {
+    Write-Host "  [AVISO] runtime\extension-host\windows\x64\extension-host.exe no es nuestro lanzador" -ForegroundColor DarkYellow
+    Write-Host "          (o falta src\host.mjs). El puente de navegador no funcionara." -ForegroundColor DarkYellow
+    Write-Host "          Reinstala desde el release oficial o compila con runtime\extension-host\launcher\build.ps1" -ForegroundColor DarkYellow
+}
+
 $binDir = Join-Path $InstallDir "runtime\bin"
 $browserDir = Join-Path $InstallDir "runtime\browser"
 $homeDir = Join-Path $InstallDir "home"
@@ -88,6 +111,28 @@ $shimDir = Join-Path $binDir "node_modules\browser"
 New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
 Copy-Item -Path (Join-Path $browserDir "browser-client.mjs") -Destination (Join-Path $shimDir "browser-client.mjs") -Force
 Write-Host "  -> Shim 'browser' sincronizado con el cliente actual." -ForegroundColor DarkGray
+
+# Shim `@computer-user/sky-guard`: la guardia de allowlist/lista negra que
+# envuelve al servicio confiable `sky`. La fuente unica es
+# runtime\computer-use\sky-guard.mjs y aqui se copia igual que browser-client.mjs:
+# el kernel de node_repl solo importa ficheros dentro de NODE_REPL_TRUSTED_CODE_PATHS
+# y resuelve el especificador "@computer-user/sky-guard" via NODE_REPL_NODE_MODULE_DIRS.
+$guardSource = Join-Path $InstallDir "runtime\computer-use\sky-guard.mjs"
+if (-not (Test-Path $guardSource)) { throw "Falta la guardia de Computer Use: $guardSource" }
+$guardShimDir = Join-Path $binDir "node_modules\@computer-user\sky-guard"
+New-Item -ItemType Directory -Path $guardShimDir -Force | Out-Null
+Copy-Item -Path $guardSource -Destination (Join-Path $guardShimDir "index.mjs") -Force
+$guardPackageJson = [ordered]@{
+    name = "@computer-user/sky-guard"
+    version = "1.0.0"
+    private = $true
+    description = "Allowlist/blacklist guard that wraps the @oai/sky trusted RPC service for the node_repl kernel"
+    type = "module"
+    main = "index.mjs"
+    exports = @{ "." = "./index.mjs" }
+}
+Write-Utf8NoBom (Join-Path $guardShimDir "package.json") ($guardPackageJson | ConvertTo-Json -Depth 5)
+Write-Host "  -> Shim '@computer-user/sky-guard' sincronizado con la guardia actual." -ForegroundColor DarkGray
 
 # Limpiar residuos de versiones anteriores / estado del runtime en el home propio
 foreach ($junk in @("skills", "tmp", ".tmp", "installation_id")) {
@@ -122,7 +167,11 @@ $nodeExe = (Join-Path $binDir "node.exe")
 $nodeModules = (Join-Path $binDir "node_modules")
 $browserServicePosix = (Join-Path $browserDir "browser-service.mjs").Replace("\", "/")
 
-$trustedServices = '{"browser":"' + $browserServicePosix + '","sky":"@oai/sky/service"}'
+# `sky` apunta a NUESTRA guardia, no al servicio crudo de @oai/sky: sin esto el
+# modo independiente no aplica la allowlist ni las prohibiciones. Si el shim no
+# puede cargarse, el kernel falla de forma visible en lugar de degradar.
+$skyGuardPackage = "@computer-user/sky-guard"
+$trustedServices = '{"browser":"' + $browserServicePosix + '","sky":"' + $skyGuardPackage + '"}'
 
 $runtimeEnv = [ordered]@{
     CODEX_HOME = $homeDir

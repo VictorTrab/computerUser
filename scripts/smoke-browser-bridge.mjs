@@ -11,7 +11,7 @@
 //
 // Usage: node smoke-browser-bridge.mjs <InstallDir>
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -64,8 +64,16 @@ try {
 }
 
 // --- 2. Fake extension (impersonates the browser) ---------------------------
-const host = spawn(extensionHost, [`chrome-extension://${extensionId}/`, "--parent-window=0"], {
-  env: { ...process.env, CODEX_HOME: homeDir },
+// PIPE AISLADO: el host falso crea su propio named pipe y el runtime del test se
+// limita a el por medio de BROWSER_USE_BACKEND_PATHS (lista de rutas absolutas de
+// pipe que el runtime usa TAL CUAL, sin descubrir nada en \\.\pipe\). Sin esto el
+// runtime descubre los puentes VIVOS del usuario (Chrome/Brave con la extension
+// cargada), getBrowser("chrome") devuelve el navegador real (0 pestañas de
+// agente) y el smoke aborta: el empaquetado no puede depender de que el usuario
+// tenga los navegadores cerrados.
+const smokePipeName = `\\\\.\\pipe\\codex-browser-use\\smoke-${randomUUID()}`;
+const host = spawn(extensionHost, [`chrome-extension://${extensionId}/`, "--parent-window=0", `--pipe-name=${smokePipeName}`], {
+  env: { ...process.env, CODEX_HOME: homeDir, CU_HOST_PIPE_NAME: smokePipeName },
   stdio: ["pipe", "pipe", "pipe"],
   windowsHide: true,
 });
@@ -141,6 +149,8 @@ const repl = spawn(nodeReplExe, ["--disable-sandbox"], {
       browser: join(browserDir, "browser-service.mjs").replace(/\\/g, "/"),
       sky: "@oai/sky/service",
     }),
+    // Aislamiento del puente: SOLO nuestro pipe de smoke (ver arriba).
+    BROWSER_USE_BACKEND_PATHS: smokePipeName,
     SKY_CUA_NATIVE_PIPE: "0",
     BROWSER_USE_AVAILABLE_BACKENDS: "chrome,iab",
     BROWSER_USE_TINYSKY_ENABLED: "1",

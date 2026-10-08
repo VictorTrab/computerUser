@@ -48,9 +48,31 @@ Report-Check -Name "node.exe" -Status (Test-Path $nodePath) `
     -SuccessMsg "Presente en runtime\bin" `
     -ErrorMsg "Falta node.exe"
 
-Report-Check -Name "extension-host.exe" -Status (Test-Path $extHostPath) `
+# El host nativo es PROPIO (ya no se usa el binario de Codex): lanzador compilado
+# + src\host.mjs. Comprobamos las dos cosas, no solo que exista el .exe.
+$hasExtHost = Test-Path $extHostPath
+Report-Check -Name "extension-host.exe" -Status $hasExtHost `
     -SuccessMsg "Presente en runtime\extension-host" `
-    -ErrorMsg "Falta extension-host.exe"
+    -ErrorMsg "Falta extension-host.exe" `
+    -FixMsg "Reinstala con install.ps1 o ejecuta 'free-computer-user update'"
+
+if ($hasExtHost) {
+    $hostSrc = Join-Path $InstallDir "runtime\extension-host\src\host.mjs"
+    $ownHost = $false
+    try {
+        $probe = [string](& $nodePath -e "const fs=require('fs');const b=fs.readFileSync(process.argv[1]);const m=Buffer.from('ComputerUser native messaging launcher','latin1');process.stdout.write(b.includes(m)?'OWN':'FOREIGN')" $extHostPath 2>$null)
+        $ownHost = ($probe -match 'OWN')
+    } catch { $ownHost = $false }
+    Report-Check -Name "Host nativo propio" -Status $ownHost `
+        -SuccessMsg "es nuestro lanzador (no el binario de Codex)" `
+        -ErrorMsg "extension-host.exe NO es nuestro lanzador (¿binario de Codex?)" `
+        -FixMsg "Reinstala el paquete; reversion manual: copia extension-host.exe.bak-codex sobre extension-host.exe"
+
+    Report-Check -Name "Host nativo: src\host.mjs" -Status (Test-Path $hostSrc) `
+        -SuccessMsg "Presente (el lanzador resuelve ..\src\host.mjs)" `
+        -ErrorMsg "Falta runtime\extension-host\src\host.mjs; el host no arrancaria" `
+        -FixMsg "Reinstala el paquete completo (carpeta runtime\extension-host\src\)"
+}
 
 $hasPython = [bool](Get-Command python -ErrorAction SilentlyContinue)
 Report-Check -Name "Python Runtime" -Status $hasPython `
@@ -126,6 +148,35 @@ if ($extExists) {
         Report-Check -Name "ID de extension" -Status $false `
             -ErrorMsg "No se pudo derivar el ID desde extension\manifest.json" `
             -FixMsg "Revisa que el manifiesto incluya el campo 'key'"
+    }
+}
+
+# Guardian del manifiesto: si falta cualquier fichero declarado, el navegador no
+# carga la extension. El checker (scripts\check-extension-files.mjs) sale 1 y
+# lista los que faltan. Se ejecuta con el node del runtime instalado.
+$checkerPath = Join-Path $PSScriptRoot "check-extension-files.mjs"
+if ($extExists) {
+    if (-not (Test-Path $nodePath)) {
+        Report-Check -Name "Ficheros del manifiesto" -Status $false `
+            -ErrorMsg "Falta runtime\bin\node.exe para ejecutar el guardian" `
+            -FixMsg "Ejecuta 'free-computer-user update' o reinstala con install.ps1"
+    } elseif (-not (Test-Path $checkerPath)) {
+        Report-Check -Name "Ficheros del manifiesto" -Status $false `
+            -ErrorMsg "Falta scripts\check-extension-files.mjs" `
+            -FixMsg "Reinstala el paquete completo (carpeta scripts\)"
+    } else {
+        $checkLines = @(& $nodePath $checkerPath $extensionDir 2>&1 | ForEach-Object { "$_" })
+        $checkExit = $LASTEXITCODE
+        $checkMsg = ($checkLines | Where-Object { $_ -and "$_".Trim() } | Select-Object -First 1)
+        $checkMsg = "$checkMsg" -replace '^\[(OK|FALLO)\]\s*', ''
+        if (-not $checkMsg) { $checkMsg = "el guardian no devolvio salida" }
+        if ($checkExit -eq 0) {
+            Report-Check -Name "Ficheros del manifiesto" -Status $true -SuccessMsg $checkMsg
+        } else {
+            Report-Check -Name "Ficheros del manifiesto" -Status $false `
+                -ErrorMsg $checkMsg `
+                -FixMsg "Reinstala o ejecuta 'free-computer-user update' (el manifest declara ficheros que no estan)"
+        }
     }
 }
 

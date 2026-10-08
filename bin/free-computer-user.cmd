@@ -31,7 +31,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%\scripts\uninstal
 goto end
 
 :version
-echo free-computer-user v1.0.7
+echo free-computer-user v1.0.8
 goto end
 
 :help

@@ -5,11 +5,11 @@ param(
 $ErrorActionPreference = 'SilentlyContinue'
 
 Write-Host ""
-Write-Host "=== Desinstalador de ComputerUser ===" -ForegroundColor Yellow
+Write-Host "=== Desinstalador de Free Computer User ===" -ForegroundColor Yellow
 Write-Host ""
 
 # 1. Eliminar registros de Native Messaging Host
-Write-Host "[1/4] Desregistrando Native Messaging Hosts de navegadores..." -ForegroundColor Gray
+Write-Host "[1/5] Desregistrando Native Messaging Hosts de navegadores..." -ForegroundColor Gray
 $regTargets = @(
     "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.openai.codexextension",
     "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.openai.codexextension",
@@ -24,10 +24,14 @@ foreach ($r in $regTargets) {
 }
 
 # 2. Eliminar Skills globales
-Write-Host "[2/4] Eliminando skills de ~/.agents/skills y ~/.dsh/skills..." -ForegroundColor Gray
+Write-Host "[2/5] Eliminando skills de ~/.agents/skills y ~/.dsh/skills..." -ForegroundColor Gray
 $skillPaths = @(
+    (Join-Path $env:USERPROFILE ".agents\skills\free-computer-user"),
+    (Join-Path $env:USERPROFILE ".agents\skills\free-control-chrome"),
     (Join-Path $env:USERPROFILE ".agents\skills\computer-use-windows"),
     (Join-Path $env:USERPROFILE ".agents\skills\control-chrome"),
+    (Join-Path $env:USERPROFILE ".dsh\skills\free-computer-user"),
+    (Join-Path $env:USERPROFILE ".dsh\skills\free-control-chrome"),
     (Join-Path $env:USERPROFILE ".dsh\skills\computer-use-windows"),
     (Join-Path $env:USERPROFILE ".dsh\skills\control-chrome")
 )
@@ -40,12 +44,11 @@ foreach ($sp in $skillPaths) {
 }
 
 # 3. Limpiar DeepSeek Harness (cordis.patch.yml)
-Write-Host "[3/4] Limpiando configuracion en DeepSeek Harness..." -ForegroundColor Gray
+Write-Host "[3/5] Limpiando configuracion en DeepSeek Harness..." -ForegroundColor Gray
 $cordisPatch = Join-Path $env:USERPROFILE ".dsh\profiles\desktop\cordis.patch.yml"
 if (Test-Path $cordisPatch) {
     $content = Get-Content $cordisPatch -Raw
     if ($content -match "mcp-computer-user") {
-        # Remover bloque mcp-computer-user
         $cleaned = $content -replace "(?ms)- id: mcp-computer-user.*?version: `"[^`"]+`"\r?\n?", ""
         Set-Content -Path $cordisPatch -Value $cleaned -Encoding UTF8
         Write-Host "  [OK] Removido de cordis.patch.yml." -ForegroundColor Green
@@ -53,7 +56,7 @@ if (Test-Path $cordisPatch) {
 }
 
 # 4. Limpiar Antigravity
-Write-Host "[4/4] Limpiando configuracion en Antigravity..." -ForegroundColor Gray
+Write-Host "[4/5] Limpiando configuracion en Antigravity..." -ForegroundColor Gray
 $antigravityMcpConfig = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
 if (Test-Path $antigravityMcpConfig) {
     try {
@@ -64,6 +67,17 @@ if (Test-Path $antigravityMcpConfig) {
             Write-Host "  [OK] Removido de mcp_config.json de Antigravity." -ForegroundColor Green
         }
     } catch {}
+}
+
+# 5. Remover comando del PATH del Usuario
+Write-Host "[5/5] Removiendo 'free-computer-user' del PATH de Windows..." -ForegroundColor Gray
+$InstallDir = (Resolve-Path "$PSScriptRoot\..").Path
+$cliBinDir = Join-Path $InstallDir "bin"
+$currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($currentUserPath -split ';' -contains $cliBinDir) {
+    $newPath = ($currentUserPath -split ';' | Where-Object { $_ -ne $cliBinDir }) -join ';'
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    Write-Host "  [OK] Removido del PATH de Windows." -ForegroundColor Green
 }
 
 Write-Host ""

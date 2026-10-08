@@ -1,4 +1,4 @@
-# ComputerUser
+# ComputerUser (Free Computer User)
 
 <p align="center">
   <img src="assets/intro.gif" alt="ComputerUser Intro Animation" width="750" />
@@ -32,11 +32,36 @@ irm https://raw.githubusercontent.com/VictorTrab/computerUser/main/scripts/insta
 > ```
 
 ### ¿Qué hace el instalador automáticamente?
-- 📁 Configura el motor de forma autocontenida sin requerir instalar OpenAI Codex ni ChatGPT.
+- 📁 Configura el motor de forma autocontenida sin requerir software de terceros.
 - 🌐 Registra el **Native Messaging Host** en Windows para **Google Chrome**, **Brave** y **Microsoft Edge**.
-- 🧠 Despliega las **Skills Globales** en `~/.agents/skills` (reconocidas por Cursor, Cline, OpenCode, Gemini CLI, etc.) y en `~/.dsh/skills`.
+- 🧠 Despliega las **Skills Globales** (`free-computer-user` y `free-control-chrome`) en `~/.agents/skills` y `~/.dsh/skills`.
 - 🤖 Configura automáticamente el cliente MCP en **DeepSeek Harness** (`cordis.patch.yml`) y en **Antigravity** (`mcp_config.json`).
-- 🔒 Aplica rutas absolutas dinámicas y whitelist local de aplicaciones en tu propio equipo.
+- 🛠️ Añade la CLI global `free-computer-user` al **PATH de Windows**.
+- 🩺 Ejecuta el chequeo de salud `doctor` al finalizar para garantizar que todo esté operativo.
+
+---
+
+## 🩺 Herramienta CLI de Administración (`free-computer-user`)
+
+Una vez instalado, tienes disponible el comando `free-computer-user` en cualquier ventana de PowerShell o CMD:
+
+### 1. Diagnóstico del sistema (`doctor`)
+```powershell
+free-computer-user doctor
+```
+*Verifica runtimes, claves del registro de Windows, extensión de navegador, servidor MCP y lista de aplicaciones autorizadas.*
+
+### 2. Actualizar a la última versión (`update`)
+```powershell
+free-computer-user update
+```
+*Descarga las mejoras de GitHub, refresca las skills y sincroniza los navegadores automáticamente.*
+
+### 3. Desinstalar limpiamente (`uninstall`)
+```powershell
+free-computer-user uninstall
+```
+*Elimina los registros del Native Messaging Host en Windows, quita las skills y retira la configuración MCP de tus agentes.*
 
 ---
 
@@ -53,32 +78,16 @@ irm https://raw.githubusercontent.com/VictorTrab/computerUser/main/scripts/insta
 
 ---
 
-## 🔄 Actualizar y Desinstalar
-
-### Actualizar a la última versión
-```powershell
-.\scripts\update.ps1
-```
-*Descarga las mejoras de GitHub, refresca las skills y sincroniza los navegadores automáticamente.*
-
-### Desinstalar limpiamente
-```powershell
-.\scripts\uninstall.ps1
-```
-*Elimina los registros del Native Messaging Host en Windows, quita las skills de `~/.agents` y retira la configuración MCP de DeepSeek y Antigravity.*
-
----
-
 ## 🚀 Cómo Usarlo con tus Agentes
 
-Una vez instalado, **no necesitas comandos manuales ni prefijos especiales**. Pídele a tu modelo lo que necesitas en lenguaje natural:
+Una vez instalado, **no necesitas prefijos especiales**. Pídele a tu modelo lo que necesitas en lenguaje natural:
 
-### 🖥️ Automatización de Escritorio (Windows)
+### 🖥️ Automatización de Escritorio (`free-computer-user`)
 - *"Lista las ventanas abiertas y dime el título de la activa."*
 - *"Abre la calculadora de Windows y suma 45 + 12."*
-- *"Captura el estado de la ventana de pruebas de SIGQUA y haz clic en el botón de Iniciar Sesión."*
+- *"Captura el estado de la ventana de pruebas de mi software y haz clic en Iniciar Sesión."*
 
-### 🌐 Navegación e Inspección Web (Chrome & Brave)
+### 🌐 Navegación e Inspección Web (`free-control-chrome`)
 - *"Revisa las pestañas que tengo abiertas en Chrome."*
 - *"Navega a file:///C:/proyectos/manual.html y valida la estructura de títulos."*
 - *"Lee el contenido del artículo de la pestaña activa y genera un resumen."*
@@ -90,25 +99,29 @@ Una vez instalado, **no necesitas comandos manuales ni prefijos especiales**. P�
 ```text
 computerUser/
 ├── assets/
-│   └── intro.gif                  # Animación de presentación para el README
+│   └── intro.gif                  # Animación de presentación
+├── bin/
+│   ├── free-computer-user.cmd     # Wrapper ejecutable para consola CMD
+│   └── free-computer-user.ps1     # CLI nativo de administración para PowerShell
 ├── runtime/
 │   ├── bin/                       # Servidor MCP Stdio (node_repl.exe) y runtime Node
 │   ├── browser/                   # Scripts de automatización web parchados para file://
 │   └── extension-host/            # Host nativo de mensajería para navegadores
 ├── extension/                     # Extensión Manifest V3 para Chrome, Brave y Edge
-│   ├── manifest.json              # Manifiesto limpio (sin telemetría ni dependencias de ChatGPT)
-│   ├── images/                    # Iconos optimizados (16, 32, 48, 128, 256 px)
-│   └── codex-sidepanel/           # Tarjeta de estado limpia de ComputerUser Bridge
+│   ├── manifest.json              # Manifiesto limpio
+│   └── images/                    # Iconos optimizados
 ├── home/
 │   └── computer-use/config.toml   # Whitelist local de aplicaciones autorizadas
 ├── skills/
-│   ├── computer-use-windows/      # Guia para interactuar con el motor de escritorio
-│   └── control-chrome/            # Guia para interactuar con browser-client
+│   ├── free-computer-user/        # Guía técnica en inglés para el motor de escritorio
+│   └── free-control-chrome/       # Guía técnica en inglés para navegación web
+├── rules/
+│   └── AGENTS.md                  # Políticas y directivas de seguridad para los agentes
 ├── scripts/
-│   ├── install.ps1                # Instalador universal desatendido
-│   ├── update.ps1                 # Actualizador automatico via Git
+│   ├── install.ps1                # Instalador universal desatendido (7 pasos)
+│   ├── update.ps1                 # Actualizador automático vía Git
 │   ├── uninstall.ps1              # Desinstalador limpio
-│   └── generate_intro_gif.py      # Generador de banner animado
+│   └── doctor.ps1                 # Verificador de diagnóstico y salud
 └── adapters/
     └── universal_runner.py        # Runner universal CLI (Ollama, DeepSeek, OpenAI, etc.)
 ```

@@ -1,44 +1,43 @@
-# Reglas de Computer User para Agentes de IA
+# AI Agent Guidelines & Safety Policy
 
-Este documento rige el comportamiento de cualquier agente de IA (Cursor, Cline, OpenCode, DeepSeek Harness, Antigravity, etc.) al utilizar el motor de automatización local `computerUser`.
-
----
-
-## 1. Reglas de Acceso a Aplicaciones (Allowlist de Seguridad)
-
-- **Política de Ejecutables:** El motor nativo de Windows valida el nombre del proceso contra la lista blanca en `home/computer-use/config.toml`. Cualquier intento de interactuar con un ejecutable fuera de esta lista será bloqueado por política.
-- **Gestión Dinámica de Apps:** Si el usuario te pide controlar una aplicación legítima que no está en la lista (por ejemplo: un software interno, una app de diseño, etc.):
-  1. Identifica el nombre del proceso ejecutable (ej. `app.exe`).
-  2. Añádelo a la sección `[apps] allowed` de `home/computer-use/config.toml`.
-  3. Procede con la automatización sin interrumpir innecesariamente al usuario.
-- **Límites Estrictos de Seguridad:**
-  - **NUNCA** agregues a la lista ni interactúes con herramientas de configuración crítica del sistema: `regedit.exe`, administradores de discos, ventanas de elevación de privilegios de Windows (UAC / `Consent.exe`) ni gestores de contraseñas/banca.
+This document governs the operational behavior and security constraints for any AI agent (Cursor, Cline, OpenCode, DeepSeek Harness, Antigravity, etc.) interacting with the local `computerUser` automation engine.
 
 ---
 
-## 2. Reglas de Interacción en Escritorio (`@oai/sky`)
+## 1. Application Access Policy (Security Allowlist)
 
-- **Prioridad Semántica (UIA):** Prefiere siempre interactuar mediante `element_index` (árbol de accesibilidad nativo de Windows) y `set_value` antes de recurrir a coordenadas de pantalla `(x, y)`. Esto garantiza robustez frente a cambios de resolución, escalado de DPI o movimiento de ventanas.
-- **Ciclo de Verificación:** Trata `sky.get_window_state` como una foto instantánea. Siempre que realices una acción que modifique el estado de la interfaz (un clic, enviar texto, atajo de teclado), actualiza el estado con:
+- **Process Filtering:** The Windows native engine verifies the process name or Application User Model ID (AUMID) of target windows against the allowlist located in `home/computer-use/config.toml`. Any attempt to interact with an unlisted executable is rejected by system policy.
+- **Dynamic Allowlist Expansion:** If the user requests automation of a legitimate application that is not currently listed (e.g., an internal line-of-business app, graphics editor, media player, etc.):
+  1. Determine the process executable name (e.g., `app.exe`).
+  2. Append `"app.exe"` to the `[apps] allowed` array in `home/computer-use/config.toml`.
+  3. Proceed with automation without unnecessary user interruption.
+- **Strict Security Boundaries:**
+  - **NEVER** add to the allowlist or interact with critical system management utilities: `regedit.exe`, disk management tools, Windows User Account Control elevation dialogs (`Consent.exe`), password managers, or financial banking applications.
+
+---
+
+## 2. Desktop UI Automation Best Practices (`@oai/sky`)
+
+- **Semantic Prioritization (UIA):** Always prefer interacting via accessibility element indices (`element_index`) and direct value replacement (`set_value`) before falling back to window-relative coordinates `(x, y)`. Semantic elements remain stable across resolution shifts, window repositions, and DPI scaling changes.
+- **Verification Loop:** Treat `sky.get_window_state` as an instantaneous snapshot. Refresh the window state with:
   ```js
   const state = await sky.get_window_state({ window: targetWindow, include_screenshot: true, include_text: true });
   ```
-- **Lanzamiento y Recuperación:** Si la app objetivo no está visible en `sky.list_windows()`, lánzala con `sky.launch_app({ app: "..." })` o mediante el sistema, espera un breve instante y refresca `sky.list_windows()` antes de continuar.
+  after any action that mutates the UI (clicks, typing, shortcut keys) to verify the result before deciding the subsequent step.
+- **Window Discovery:** If the target application window is not found in `sky.list_windows()`, launch it via `sky.launch_app({ app: "..." })` or the system shell, wait briefly for initialization, and refresh `sky.list_windows()` before proceeding.
 
 ---
 
-## 3. Reglas de Automatización de Navegador (Chrome / Brave Bridge)
+## 3. Web Browser Navigation Best Practices (`browser`)
 
-- **Inspección Rápida:** En lugar de hacer capturas pesadas y OCR visual, aprovecha el puente nativo de la extensión:
-  - Usa `tab.accessibility.snapshot()` para leer el contenido y estructura de la página.
-  - Usa `tab.playwright` para clics, escritura y navegación basada en selectores CSS/XPath.
-- **Archivos Locales:** Para abrir archivos HTML, PDFs o recursos locales, el puente admite esquemas `file://`.
+- **Lightweight Semantic Snapshots:** Prefer `tab.accessibility.snapshot()` and Playwright selector methods (`tab.playwright.click`, `tab.playwright.fill`) over heavy full-page screenshot streaming and OCR.
+- **Local Development Support:** Use `file://` URLs for inspecting local documentation, HTML builds, and test files.
 
 ---
 
-## 4. Acciones Destructivas y Confirmación con el Usuario
+## 4. Safeguards for Irreversible Actions
 
-- **Confirmación Requerida:** Solicita confirmación explícita al usuario antes de:
-  1. Eliminar archivos, bases de datos o configuraciones permanentes.
-  2. Enviar correos electrónicos, mensajes en Slack/Discord o publicaciones en redes sociales que no sean borradores.
-  3. Realizar transacciones financieras o autorizaciones de credenciales.
+- **Explicit User Confirmation Required:** You must seek explicit user confirmation before:
+  1. Permanently deleting files, databases, or project repositories.
+  2. Sending non-draft emails, posting publicly on social platforms, or messaging external channels.
+  3. Executing monetary transactions or credential approval flows.

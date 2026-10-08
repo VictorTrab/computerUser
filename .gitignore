@@ -4,6 +4,15 @@ __pycache__/
 *$py.class
 *.log
 
+# Databases & Runtime State
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+home/*.sqlite*
+home/installation_id
+home/.tmp/
+home/tmp/
+
 # Temp & OS
 Thumbs.db
 ehthumbs.db

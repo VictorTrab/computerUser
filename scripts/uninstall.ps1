@@ -72,9 +72,16 @@ $cordisPatch = Join-Path $env:USERPROFILE ".dsh\profiles\desktop\cordis.patch.ym
 if (Test-Path $cordisPatch) {
     $content = Get-Content $cordisPatch -Raw
     if ($content -match "mcp-computer-user") {
-        $cleaned = $content -replace "(?ms)- id: mcp-computer-user.*?version: `"[^`"]+`"\r?\n?", ""
-        Set-Content -Path $cordisPatch -Value $cleaned -Encoding UTF8
-        Write-Host "  [OK] Removido de cordis.patch.yml." -ForegroundColor Green
+        # El bloque generado por el instalador no siempre termina en `version:`,
+        # asi que se recorta hasta el siguiente `- id:` de primer nivel o el final.
+        $cleaned = [regex]::Replace($content, '(?ms)^- id: mcp-computer-user[ \t]*\r?\n.*?(?=^- id: |\z)', '')
+        $cleaned = $cleaned -replace '(\r?\n){3,}', "`r`n`r`n"
+        [System.IO.File]::WriteAllText($cordisPatch, $cleaned, (New-Object System.Text.UTF8Encoding($false)))
+        if ($cleaned -match "mcp-computer-user") {
+            Write-Host "  [AVISO] No se pudo eliminar el bloque mcp-computer-user; revisa $cordisPatch" -ForegroundColor DarkYellow
+        } else {
+            Write-Host "  [OK] Removido de cordis.patch.yml." -ForegroundColor Green
+        }
     }
 }
 
@@ -106,8 +113,35 @@ Write-Host "  [OK] Removido del PATH de Windows." -ForegroundColor Green
 
 if ($PurgeFiles) {
     $engineFolder = Join-Path $env:USERPROFILE ".free-computer-user"
+
+    # Los navegadores dejan vivo un extension-host.exe dentro de la instalacion;
+    # si sigue en ejecucion, el archivo queda bloqueado y el borrado falla en
+    # silencio. Se detienen solo los procesos que corren desde esta carpeta.
+    $running = @()
     if (Test-Path $engineFolder) {
-        Remove-Item -Recurse -Force $engineFolder
+        $running = Get-CimInstance Win32_Process -Filter "Name='extension-host.exe' or Name='node_repl.exe' or Name='node.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($engineFolder, [System.StringComparison]::OrdinalIgnoreCase) }
+        foreach ($proc in $running) {
+            try {
+                Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
+                Write-Host "  [OK] Detenido proceso en uso: $($proc.Name) (PID $($proc.ProcessId))" -ForegroundColor DarkGray
+                Start-Sleep -Milliseconds 400
+            } catch {
+                Write-Host "  [AVISO] No se pudo detener $($proc.Name) (PID $($proc.ProcessId)): $_" -ForegroundColor DarkYellow
+            }
+        }
+    }
+
+    if (Test-Path $engineFolder) {
+        Remove-Item -Recurse -Force $engineFolder -ErrorAction SilentlyContinue
+    }
+
+    if (Test-Path $engineFolder) {
+        $left = Get-ChildItem $engineFolder -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName
+        Write-Host "  [AVISO] No se pudo eliminar por completo $engineFolder" -ForegroundColor DarkYellow
+        Write-Host "          Restos: $($left -join ', ')" -ForegroundColor DarkYellow
+        Write-Host "          Cierra los navegadores y repite, o borra la carpeta a mano." -ForegroundColor DarkYellow
+    } else {
         Write-Host "  [OK] Eliminada carpeta del motor: $engineFolder" -ForegroundColor Green
     }
 }

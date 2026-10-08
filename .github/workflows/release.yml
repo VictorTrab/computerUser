@@ -1,0 +1,32 @@
+name: Release Free Computer User
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Integrity & Package Release
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package.ps1 -OutputDir dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/free-computer-user-windows-x64.zip
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false

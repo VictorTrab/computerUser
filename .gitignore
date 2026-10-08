@@ -21,6 +21,10 @@ $RECYCLE.BIN/
 *.tmp
 .DS_Store
 
+# Release Artifacts
+dist/
+.stage_release/
+
 # Git ignore exceptions
 !runtime/
 !extension/

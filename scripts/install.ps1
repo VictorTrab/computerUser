@@ -24,11 +24,32 @@ if (-not $InstallDir) {
 Write-Host "[1/7] Preparando directorio en: $InstallDir" -ForegroundColor Gray
 
 if (-not (Test-Path "$InstallDir\runtime\bin\node_repl.exe")) {
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        Write-Host "Clonando repositorio desde $RepoUrl..." -ForegroundColor Cyan
-        git clone $RepoUrl $InstallDir
-    } else {
-        throw "Git no esta instalado en este equipo. Por favor instala Git o copia la carpeta manualmente."
+    $releaseZipUrl = "https://github.com/VictorTrab/computerUser/releases/latest/download/free-computer-user-windows-x64.zip"
+    $tempZip = Join-Path $env:TEMP "free-computer-user-windows-x64.zip"
+    $downloadSuccess = $false
+
+    Write-Host "Descargando paquete optimizado desde GitHub Releases..." -ForegroundColor Cyan
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $releaseZipUrl -OutFile $tempZip -UseBasicParsing -ErrorAction Stop
+        if ((Test-Path $tempZip) -and (Get-Item $tempZip).Length -gt 1000000) {
+            Write-Host "Extrayendo componentes en $InstallDir..." -ForegroundColor Cyan
+            Expand-Archive -Path $tempZip -DestinationPath $InstallDir -Force
+            Remove-Item -Force $tempZip -ErrorAction SilentlyContinue
+            $downloadSuccess = $true
+            Write-Host "  [OK] Release instalado correctamente (sin necesidad de Git)." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "  (Aviso: Release no disponible aun, descargando via Git...)" -ForegroundColor DarkYellow
+    }
+
+    if (-not $downloadSuccess) {
+        if (Get-Command git -ErrorAction SilentlyContinue) {
+            Write-Host "Clonando repositorio desde $RepoUrl..." -ForegroundColor Cyan
+            git clone $RepoUrl $InstallDir
+        } else {
+            throw "No se pudo descargar el release oficial y Git no esta instalado en este equipo."
+        }
     }
 }
 

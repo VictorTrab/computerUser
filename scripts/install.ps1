@@ -157,6 +157,14 @@ foreach ($targetDir in @($globalSkillsDir, $dshSkillsDir)) {
     Copy-Item (Join-Path $InstallDir "skills\free-computer-user\SKILL.md") (Join-Path $cuDir "SKILL.md") -Force
     Copy-Item (Join-Path $InstallDir "skills\free-control-chrome\SKILL.md") (Join-Path $chromeDir "SKILL.md") -Force
 }
+
+# Eliminar carpeta skills duplicada del directorio del motor para no duplicar contexto
+$devRepoPath = Join-Path $env:USERPROFILE "projects\computerUser"
+if ($InstallDir -ne $devRepoPath -and (Test-Path "$InstallDir\skills")) {
+    Remove-Item -Recurse -Force "$InstallDir\skills" -ErrorAction SilentlyContinue
+    Write-Host "  -> Carpeta skills duplicada eliminada del motor (~/.free-computer-user)." -ForegroundColor DarkGray
+}
+
 Write-Host "  [OK] Skills disponibles para Cursor, Cline, OpenCode, DeepSeek y Antigravity." -ForegroundColor Green
 
 # 5. Configurar DeepSeek Harness si existe

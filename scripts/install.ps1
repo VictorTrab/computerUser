@@ -134,6 +134,44 @@ $guardPackageJson = [ordered]@{
 Write-Utf8NoBom (Join-Path $guardShimDir "package.json") ($guardPackageJson | ConvertTo-Json -Depth 5)
 Write-Host "  -> Shim '@computer-user/sky-guard' sincronizado con la guardia actual." -ForegroundColor DarkGray
 
+# Puente MCP stdio: los clientes construidos sobre el SDK de Go de MCP (Antigravity,
+# Cursor...) abren la tuberia con `server/discover`; node_repl.exe exige `initialize`
+# y cierra la conexion (EOF). El puente responde -32601 sin reenviar, inyecta los
+# metadatos de turno que browser-service exige y auto-responde las elicitation.
+$bridgeFile = Join-Path $binDir "mcp-bridge.mjs"
+$bridgeSource = Join-Path $binDir "mcp-bridge.mjs"   # ya viene en el paquete/repo
+if (-not (Test-Path $bridgeSource)) {
+    throw "Falta el puente MCP stdio: $bridgeSource (reinstala el paquete completo)"
+}
+Write-Host "  -> Puente MCP stdio presente (mcp-bridge.mjs)." -ForegroundColor DarkGray
+
+# Parche de metadatos de turno en las TRES copias de browser-service.mjs. El
+# servicio exige `_meta["x-codex-turn-metadata"]`; los clientes que no son Codex no
+# lo mandan y la llamada al navegador moria con "Missing required Codex turn
+# metadata". El parche es idempotente y tambien se lo aplica a las copias de
+# @oai/browser-desktop y @oai/cua para que las tres queden consistentes.
+$turnPatchScript = Join-Path $browserDir "patch-turn-metadata.mjs"
+$turnTargets = @(
+    (Join-Path $browserDir "browser-service.mjs"),
+    (Join-Path $binDir "node_modules\@oai\browser-desktop\scripts\browser-service.mjs"),
+    (Join-Path $binDir "node_modules\@oai\cua\dist\lib\js\oai_js_browser\dist\skill\scripts\browser-service.mjs")
+) | Where-Object { Test-Path $_ }
+if ((Test-Path $turnPatchScript) -and $turnTargets.Count -gt 0) {
+    try {
+        $patchOutput = @(& (Join-Path $binDir "node.exe") $turnPatchScript @turnTargets 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  -> Metadatos de turno por defecto aplicados a $($turnTargets.Count) copia(s) de browser-service.mjs." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  [AVISO] El parche de metadatos de turno devolvio $LASTEXITCODE :" -ForegroundColor DarkYellow
+            $patchOutput | Select-Object -First 5 | ForEach-Object { Write-Host "          $_" -ForegroundColor DarkYellow }
+        }
+    } catch {
+        Write-Host "  [AVISO] No se pudo aplicar el parche de metadatos de turno: $_" -ForegroundColor DarkYellow
+    }
+} else {
+    Write-Host "  [AVISO] Falta runtime\browser\patch-turn-metadata.mjs; el navegador fallara en clientes no-Codex." -ForegroundColor DarkYellow
+}
+
 # Limpiar residuos de versiones anteriores / estado del runtime en el home propio
 foreach ($junk in @("skills", "tmp", ".tmp", "installation_id")) {
     $junkPath = Join-Path $homeDir $junk
@@ -204,6 +242,18 @@ $mcpConfig = @{
 }
 Write-Utf8NoBom $mcpConfigFile ($mcpConfig | ConvertTo-Json -Depth 6)
 Write-Host "  -> mcp_config.json local actualizado." -ForegroundColor DarkGray
+
+# Entrada para Antigravity: apunta al PUENTE, no a node_repl.exe. Antigravity usa el
+# SDK de Go de MCP y abre la tuberia con `server/discover`; node_repl.exe exige
+# `initialize` como primer mensaje, cierra la conexion (EOF) y Antigravity NO relanza
+# el proceso (a diferencia de dsh, que reintenta). El puente responde el sondeo con
+# -32601, inyecta los metadatos de turno y auto-responde las elicitation. El `env`
+# es exactamente el mismo: el puente solo es un intermediario de stdio.
+$antigravityEntry = @{
+    command = $nodeExe
+    args = @($bridgeFile, "--disable-sandbox")
+    env = $runtimeEnv
+}
 
 # 3. Registrar Native Messaging Host en Windows Registry (Chrome, Brave, Edge)
 Write-Host "[3/7] Registrando Native Messaging Host en navegadores..." -ForegroundColor Gray
@@ -313,19 +363,76 @@ $envYaml
 
 # 6. Configurar Antigravity
 Write-Host "[6/7] Verificando integracion con Antigravity..." -ForegroundColor Gray
-$antigravityMcpConfig = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
-if (Test-Path (Split-Path $antigravityMcpConfig)) {
+# Esta version de Antigravity lee ~/.gemini/config/mcp_config.json. Las anteriores
+# leian ~/.gemini/antigravity/mcp_config.json (que quedaba vacio y por eso el
+# servidor MCP no cargaba nunca). Se escribe en la ruta nueva y, SOLO si su carpeta
+# ya existe, tambien en la antigua: nunca se crean carpetas de la nada.
+$antigravityMcpConfigs = @(
+    (Join-Path $env:USERPROFILE ".gemini\config\mcp_config.json"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json")
+)
+foreach ($antigravityMcpConfig in $antigravityMcpConfigs) {
+    if (-not (Test-Path (Split-Path $antigravityMcpConfig))) { continue }
     try {
-        if (Test-Path $antigravityMcpConfig) {
-            $existing = Get-Content $antigravityMcpConfig -Raw | ConvertFrom-Json
+        $rawExisting = if (Test-Path $antigravityMcpConfig) { (Get-Content $antigravityMcpConfig -Raw) } else { "" }
+        if ($rawExisting -and $rawExisting.Trim()) {
+            $existing = $rawExisting | ConvertFrom-Json
         } else {
             $existing = [pscustomobject]@{ mcpServers = [pscustomobject]@{} }
         }
-        $existing.mcpServers | Add-Member -MemberType NoteProperty -Name "computer-user" -Value $mcpConfig.mcpServers."computer-user" -Force
+        # Fusion, no sobrescritura: ~/.gemini es del usuario y puede tener otros
+        # servidores MCP ya registrados que deben conservarse.
+        if (-not ($existing.PSObject.Properties.Name -contains "mcpServers") -or $null -eq $existing.mcpServers) {
+            $existing | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([pscustomobject]@{}) -Force
+        }
+        $existing.mcpServers | Add-Member -MemberType NoteProperty -Name "computer-user" -Value $antigravityEntry -Force
         Write-Utf8NoBom $antigravityMcpConfig ($existing | ConvertTo-Json -Depth 6)
-        Write-Host "  [OK] computer-user registrado en Antigravity." -ForegroundColor Green
+        Write-Host "  [OK] computer-user registrado en $antigravityMcpConfig." -ForegroundColor Green
     } catch {
-        Write-Host "  (Nota: Revisa ~/.gemini/antigravity/mcp_config.json para agregar computer-user manualmente si es necesario)." -ForegroundColor DarkYellow
+        Write-Host "  (Nota: Revisa $antigravityMcpConfig para agregar computer-user manualmente si es necesario)." -ForegroundColor DarkYellow
+    }
+}
+
+# Antigravity CLI: vive en ~/.gemini/antigravity-cli pero NO tiene mcp_config.json
+# propio ni seccion MCP en su settings.json. Comparte la configuracion global
+# ~/.gemini/config/mcp_config.json (verificado en los strings del binario
+# language_server.exe: "Global Configuration: ~/.gemini/config/mcp_config.json
+# (applies to all sessions)"). Por eso NO se escribe nada en antigravity-cli: seria
+# duplicar la entrada y ademas con un esquema no verificado. El shim manual
+# cu-mcp-shim.mjs de una version anterior NO se borra (es del usuario): se deja
+# intacto y sin usar.
+$agyCliDir = Join-Path $env:USERPROFILE ".gemini\antigravity-cli"
+if (Test-Path $agyCliDir) {
+    $agyCliOwnConfig = Join-Path $agyCliDir "mcp_config.json"
+    if (Test-Path $agyCliOwnConfig) {
+        Write-Host "  (Aviso: existe $agyCliOwnConfig; el CLI comparte ~/.gemini\config\mcp_config.json, revisa si ese fichero hace falta)." -ForegroundColor DarkYellow
+    } else {
+        Write-Host "  [OK] Antigravity CLI: comparte ~/.gemini\config\mcp_config.json (sin config MCP propia que mantener)." -ForegroundColor Green
+    }
+}
+
+# Antigravity tambien carga las skills globales desde ~/.gemini/config/skills: se
+# enlaza (junction) al mismo directorio que ya usan el resto de agentes.
+$agyGlobalSkillsLink = Join-Path $env:USERPROFILE ".gemini\config\skills"
+if ((Test-Path (Split-Path $agyGlobalSkillsLink)) -and -not (Test-Path $agyGlobalSkillsLink)) {
+    New-Item -ItemType Junction -Path $agyGlobalSkillsLink -Target $globalSkillsDir -ErrorAction SilentlyContinue | Out-Null
+}
+if (Test-Path $agyGlobalSkillsLink) {
+    $agySkillsExpected = (Resolve-Path $globalSkillsDir -ErrorAction SilentlyContinue).Path
+    $agySkillsTargets = @()
+    $agySkillsItem = Get-Item $agyGlobalSkillsLink -Force -ErrorAction SilentlyContinue
+    if ($agySkillsItem -and $agySkillsItem.Target) { $agySkillsTargets = @($agySkillsItem.Target) }
+    $agySkillsOk = $false
+    foreach ($agySkillsTarget in $agySkillsTargets) {
+        $agySkillsResolved = (Resolve-Path $agySkillsTarget -ErrorAction SilentlyContinue).Path
+        if ($agySkillsResolved -and $agySkillsExpected -and ($agySkillsResolved -eq $agySkillsExpected)) { $agySkillsOk = $true }
+    }
+    if ($agySkillsOk) {
+        Write-Host "  [OK] Junction de skills de Antigravity -> ~/.agents\skills." -ForegroundColor Green
+    } elseif ($agySkillsTargets.Count -gt 0) {
+        Write-Host "  (Aviso: $agyGlobalSkillsLink ya apunta a '$($agySkillsTargets -join ', ')'; NO se modifica. Cambialo a mano si quieres que use ~/.agents\skills)." -ForegroundColor DarkYellow
+    } else {
+        Write-Host "  (Aviso: $agyGlobalSkillsLink ya existe y no es un junction; NO se modifica.)" -ForegroundColor DarkYellow
     }
 }
 

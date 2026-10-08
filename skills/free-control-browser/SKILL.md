@@ -146,7 +146,36 @@ Exports: `tab.content.export()` (page → file), `tab.content.exportGsuite("pdf"
 - **Ephemeral** (throwaway searches): `await tab.close();` before finishing.
 - **Tabs claimed from the user**: never close them; just release them.
 
-## 7. When something fails
+## 7. End of turn: release the engine
+
+Finishing the tabs is not the end of the turn. The browser session stays attached (CDP tabs still
+attached on the agent's side) and the desktop engine stays awake with its cursor overlay until the
+turn is explicitly closed. After §6 and before your final message:
+
+1. **Read the turn identity** with the `js` tool:
+
+   ```js
+   const meta = JSON.parse(nodeRepl.requestMeta?.["x-codex-turn-metadata"] ?? "null") ?? {};
+   nodeRepl.write(JSON.stringify(meta)); // {"session_id":"...","turn_id":"..."}
+   ```
+
+2. **Call the `turn_ended` tool** with `hook_event_name: "Stop"` and those `session_id` / `turn_id`
+   values. That is the end-of-turn signal (the one every Codex turn sends); it detaches the agent's
+   CDP tabs and sends `turnEnded` to the extension. Without it nothing is released and the session
+   stays on. The ids must be the real ones (the service matches them against the turn that just ran);
+   under the local bridge (`runtime\bin\mcp-bridge.mjs`, the Antigravity path) the bridge substitutes
+   the ids of the turn it injected, so guessed values are harmless there only.
+3. **If the client does not expose `turn_ended`** (missing from the tool list) or it sends no turn
+   metadata at all, close the turn with `js_reset` and say so in your final message.
+4. If the task also drove Windows apps, finish the desktop half as well: the overlay and the
+   computer-use helper are only released by the host notify hook
+   (`codex-computer-use.exe turn-ended <json>`, the command Codex runs from `<CODEX_HOME>\config.toml`),
+   not by `turn_ended`. See `free-computer-user` §9 for the exact snippet.
+
+A new task keeps working afterwards: the next turn reuses the engine and re-attaches tabs on demand
+(measured).
+
+## 8. When something fails
 
 | Error | Meaning / fix |
 | --- | --- |

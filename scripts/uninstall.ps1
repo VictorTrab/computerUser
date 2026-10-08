@@ -89,14 +89,21 @@ if (Test-Path $cordisPatch) {
 
 # 4. Limpiar Antigravity
 Write-Host "[4/6] Limpiando configuracion en Antigravity..." -ForegroundColor Gray
-$antigravityMcpConfig = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
-if (Test-Path $antigravityMcpConfig) {
+# Esta version de Antigravity lee ~/.gemini/config/mcp_config.json; la ruta antigua
+# se limpia tambien para no dejar la entrada en instalaciones previas. Se escribe sin
+# BOM: un BOM al principio rompe el parseo JSON de la app.
+$antigravityMcpConfigs = @(
+    (Join-Path $env:USERPROFILE ".gemini\config\mcp_config.json"),
+    (Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json")
+)
+foreach ($antigravityMcpConfig in $antigravityMcpConfigs) {
+    if (-not (Test-Path $antigravityMcpConfig)) { continue }
     try {
         $json = Get-Content $antigravityMcpConfig -Raw | ConvertFrom-Json
         if ($json.mcpServers."computer-user") {
             $json.mcpServers.PSObject.Properties.Remove("computer-user")
-            $json | ConvertTo-Json -Depth 6 | Set-Content $antigravityMcpConfig -Encoding UTF8
-            Write-Host "  [OK] Removido de mcp_config.json de Antigravity." -ForegroundColor Green
+            [System.IO.File]::WriteAllText($antigravityMcpConfig, ($json | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "  [OK] Removido de $antigravityMcpConfig." -ForegroundColor Green
         }
     } catch {}
 }

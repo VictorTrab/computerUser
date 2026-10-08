@@ -59,6 +59,14 @@ Write-Host "[1/4] Ejecutando validaciones de integridad..." -ForegroundColor Cya
 $requiredFiles = @(
     "runtime\bin\node_repl.exe",
     "runtime\bin\node.exe",
+    # Puente MCP stdio: sin el, cualquier cliente sobre el SDK de Go de MCP
+    # (Antigravity, Cursor) abre con `server/discover`, node_repl cierra con EOF y el
+    # servidor nunca arranca.
+    "runtime\bin\mcp-bridge.mjs",
+    # Parche de metadatos de turno (lo ejecuta el instalador sobre las tres copias de
+    # browser-service.mjs) + la prueba directa del puente.
+    "runtime\browser\patch-turn-metadata.mjs",
+    "scripts\test-mcp-bridge.mjs",
     "runtime\extension-host\windows\x64\extension-host.exe",
     # Host nativo PROPIO: el .exe es solo el lanzador; el host es src\host.mjs y
     # sus modulos. Sin ellos el navegador arrancaria un host sin script.
@@ -83,6 +91,30 @@ foreach ($f in $requiredFiles) {
     }
 }
 Write-Host "  [OK] Todos los componentes criticos estan presentes." -ForegroundColor Green
+
+# A1b. Clientes MCP no-Codex: el puente tiene que saber responder server/discover y el
+# servicio de navegador tiene que llevar el parche de metadatos de turno.
+Write-Host "  -> Verificando soporte de clientes MCP no-Codex..." -ForegroundColor Gray
+$bridgeToCheck = Join-Path $RootDir "runtime\bin\mcp-bridge.mjs"
+$bridgeText = Get-Content $bridgeToCheck -Raw
+if ($bridgeText -notmatch 'server/discover' -or $bridgeText -notmatch 'x-codex-turn-metadata' -or $bridgeText -notmatch 'elicitation/create') {
+    throw "runtime\bin\mcp-bridge.mjs no implementa server/discover + metadatos de turno + elicitation."
+}
+Write-Host "  [OK] Puente MCP: server/discover, metadatos de turno y elicitation presentes." -ForegroundColor Green
+
+$patchedServices = @(
+    "runtime\browser\browser-service.mjs",
+    "runtime\bin\node_modules\@oai\browser-desktop\scripts\browser-service.mjs",
+    "runtime\bin\node_modules\@oai\cua\dist\lib\js\oai_js_browser\dist\skill\scripts\browser-service.mjs"
+)
+$unpatchedServices = @($patchedServices | Where-Object {
+    $p = Join-Path $RootDir $_
+    (-not (Test-Path $p)) -or ((Get-Content $p -Raw) -notmatch 'ComputerUser patch: default turn metadata')
+})
+if ($unpatchedServices.Count -gt 0) {
+    throw ("browser-service.mjs sin el parche de metadatos de turno: " + ($unpatchedServices -join ", ") + ". Ejecuta: node runtime\browser\patch-turn-metadata.mjs <ficheros>")
+}
+Write-Host ("  [OK] {0} copias de browser-service.mjs aceptan clientes sin metadatos de Codex." -f $patchedServices.Count) -ForegroundColor Green
 
 # A2. El host nativo empaquetado tiene que ser EL NUESTRO, no el binario de Codex.
 # El lanzador propio lleva grabada la cadena de identidad; el de Codex no.
@@ -206,6 +238,17 @@ if (Test-Path $smokeScript) {
     Write-Host "  [OK] Puente de navegador verificado end-to-end." -ForegroundColor Green
 } else {
     Write-Host "  [WARN] scripts\smoke-browser-bridge.mjs no encontrado; se omite." -ForegroundColor DarkYellow
+}
+# E2. Prueba directa del puente MCP stdio (server/discover -> -32601, initialize,
+# tools/list) sobre el arbol del repo, igual que lo hara Antigravity/Cursor.
+Write-Host "  -> Ejecutando prueba del puente MCP stdio..." -ForegroundColor Gray
+$bridgeTestScript = Join-Path $RootDir "scripts\test-mcp-bridge.mjs"
+if (Test-Path $bridgeTestScript) {
+    & $nodeExe $bridgeTestScript $RootDir --fast
+    if ($LASTEXITCODE -ne 0) { throw "Prueba del puente MCP stdio fallida (exit $LASTEXITCODE)." }
+    Write-Host "  [OK] Puente MCP stdio verificado (server/discover + initialize + tools/list)." -ForegroundColor Green
+} else {
+    Write-Host "  [WARN] scripts\test-mcp-bridge.mjs no encontrado; se omite." -ForegroundColor DarkYellow
 }
 # 2. Preparar directorio temporal de empaquetado
 Write-Host ""

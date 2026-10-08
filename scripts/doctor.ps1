@@ -228,6 +228,31 @@ Report-Check -Name "mcp_config.json Local" -Status $mcpExists `
     -SuccessMsg "Archivo de servidor MCP disponible" `
     -ErrorMsg "Falta mcp_config.json"
 
+# Puente stdio: imprescindible para cualquier cliente sobre el SDK de Go de MCP
+# (Antigravity, Cursor). node_repl.exe exige `initialize` y esos clientes abren con
+# `server/discover`: sin puente, el servidor muere con EOF y nunca arranca.
+$bridgePath = Join-Path $InstallDir "runtime\bin\mcp-bridge.mjs"
+Report-Check -Name "Puente MCP stdio" -Status (Test-Path $bridgePath) `
+    -SuccessMsg "runtime\bin\mcp-bridge.mjs presente" `
+    -ErrorMsg "Falta runtime\bin\mcp-bridge.mjs (los clientes con server/discover no arrancaran)" `
+    -FixMsg "Ejecuta 'free-computer-user update' o reinstala desde el release oficial"
+
+# Las TRES copias del servicio de navegador deben llevar el parche de metadatos de
+# turno: sin el, cualquier cliente que no sea Codex recibe
+# "Missing required Codex turn metadata: session_id, turn_id".
+$turnServiceCopies = @(
+    (Join-Path $InstallDir "runtime\browser\browser-service.mjs"),
+    (Join-Path $InstallDir "runtime\bin\node_modules\@oai\browser-desktop\scripts\browser-service.mjs"),
+    (Join-Path $InstallDir "runtime\bin\node_modules\@oai\cua\dist\lib\js\oai_js_browser\dist\skill\scripts\browser-service.mjs")
+) | Where-Object { Test-Path $_ }
+$unpatched = @($turnServiceCopies | Where-Object {
+    -not ((Get-Content $_ -Raw) -match "ComputerUser patch: default turn metadata")
+})
+Report-Check -Name "Metadatos de turno por defecto" -Status ($unpatched.Count -eq 0) `
+    -SuccessMsg "las $($turnServiceCopies.Count) copias de browser-service.mjs aceptan clientes sin metadatos de Codex" `
+    -ErrorMsg ("sin parche: " + (($unpatched | ForEach-Object { Split-Path $_ -Leaf }) -join ", ")) `
+    -FixMsg "Ejecuta 'free-computer-user update' o reinstala desde el release oficial"
+
 if ($mcpExists) {
     $mcpRaw = Get-Content $mcpConfigLocal -Raw
     Report-Check -Name "Modo offline (sin token)" -Status ($mcpRaw -match "BROWSER_USE_DISABLE_AMBIENT_NETWORK") `
@@ -252,12 +277,115 @@ if (Test-Path $dshCordis) {
         -ErrorMsg "No configurado en cordis.patch.yml"
 }
 
-$antigravityConfig = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
-if (Test-Path $antigravityConfig) {
-    $hasAnti = (Get-Content $antigravityConfig -Raw) -match "computer-user"
+# Antigravity lee el servidor MCP de ~/.gemini/config/mcp_config.json y las skills
+# globales de ~/.gemini/config/skills. La ruta antigua
+# (~/.gemini/antigravity/mcp_config.json) ya NO se consulta: si la entrada solo
+# esta ahi, Antigravity no la vera.
+$antigravityConfig = Join-Path $env:USERPROFILE ".gemini\config\mcp_config.json"
+$antigravityDir = Split-Path $antigravityConfig
+$antigravityLegacy = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
+if (Test-Path $antigravityDir) {
+    $hasAnti = (Test-Path $antigravityConfig) -and ((Get-Content $antigravityConfig -Raw) -match "computer-user")
+    $legacyOnly = (-not $hasAnti) -and (Test-Path $antigravityLegacy) -and ((Get-Content $antigravityLegacy -Raw) -match "computer-user")
+    if ($legacyOnly) {
+        Write-Host "  [AVISO] computer-user esta en ~/.gemini/antigravity/mcp_config.json (ruta antigua): Antigravity no la leera." -ForegroundColor DarkYellow
+    }
     Report-Check -Name "Antigravity MCP" -Status $hasAnti `
-        -SuccessMsg "Registrado en antigravity\mcp_config.json" `
-        -ErrorMsg "No configurado en Antigravity"
+        -SuccessMsg "Registrado en ~/.gemini/config/mcp_config.json" `
+        -ErrorMsg $(if ($legacyOnly) { "Solo esta en la ruta antigua: Antigravity no lo leera" } else { "No configurado en ~/.gemini/config/mcp_config.json" }) `
+        -FixMsg "Ejecuta 'free-computer-user update' o install.ps1"
+
+    # La entrada de computer-user TIENE que apuntar al puente. Antigravity usa el SDK
+    # de Go de MCP: si `command` es node_repl.exe directo (o el shim manual
+    # cu-mcp-shim.mjs de una version anterior), el arranque falla con EOF.
+    $agyEntry = $null
+    if ($hasAnti) {
+        try {
+            $agyJson = Get-Content $antigravityConfig -Raw | ConvertFrom-Json
+            $agyEntry = $agyJson.mcpServers."computer-user"
+        } catch { $agyEntry = $null }
+    }
+    $agyCommand = if ($agyEntry) { [string]$agyEntry.command } else { "" }
+    $agyArgs = @()
+    if ($agyEntry -and $agyEntry.args) { $agyArgs = @($agyEntry.args) }
+    $agyBridgeFile = ($agyArgs | Where-Object { "$_" -match 'mcp-bridge\.mjs$' } | Select-Object -First 1)
+    $agyPointsToBridge = [bool]($agyBridgeFile -and (Test-Path $agyCommand) -and (Test-Path "$agyBridgeFile"))
+    $agyPointsToShim = [bool](($agyArgs | Where-Object { "$_" -match 'cu-mcp-shim' }).Count -gt 0) -or ($agyCommand -match 'cu-mcp-shim')
+    $agyPointsToRepl = [bool]($agyCommand -match 'node_repl\.exe$')
+    if (-not $agyPointsToBridge) {
+        $why = if ($agyPointsToShim) { "sigue apuntando al shim manual cu-mcp-shim.mjs (ya no hace falta)" }
+        elseif ($agyPointsToRepl) { "apunta a node_repl.exe directo (muere con server/discover)" }
+        else { "no apunta al puente mcp-bridge.mjs" }
+        Report-Check -Name "Antigravity -> Puente MCP" -Status $false `
+            -ErrorMsg "La entrada de computer-user $why" `
+            -FixMsg "Ejecuta 'free-computer-user update' o install.ps1 (debe quedar: node.exe mcp-bridge.mjs --disable-sandbox)"
+    } else {
+        Report-Check -Name "Antigravity -> Puente MCP" -Status $true `
+            -SuccessMsg "command=node.exe args=[mcp-bridge.mjs --disable-sandbox]"
+    }
+    # Shim manual de una version anterior: NO se borra (es del usuario), solo se avisa.
+    $agyShimFile = Join-Path $antigravityDir "cu-mcp-shim.mjs"
+    if (Test-Path $agyShimFile) {
+        Write-Host "  [NOTA] $agyShimFile ya no se necesita: el puente oficial (runtime\bin\mcp-bridge.mjs) hace lo mismo y se actualiza con el paquete. Se deja intacto." -ForegroundColor DarkGray
+    }
+
+    $agySkillsLink = Join-Path $antigravityDir "skills"
+    $agySkillsExpected = (Resolve-Path $globalSkills -ErrorAction SilentlyContinue).Path
+    $agySkillsItem = Get-Item $agySkillsLink -Force -ErrorAction SilentlyContinue
+    $agySkillsTargets = if ($agySkillsItem -and $agySkillsItem.Target) { @($agySkillsItem.Target) } else { @() }
+    $agySkillsOk = $false
+    foreach ($agySkillsTarget in $agySkillsTargets) {
+        $agySkillsResolved = (Resolve-Path $agySkillsTarget -ErrorAction SilentlyContinue).Path
+        if ($agySkillsResolved -and $agySkillsExpected -and ($agySkillsResolved -eq $agySkillsExpected)) { $agySkillsOk = $true }
+    }
+    Report-Check -Name "Antigravity Skills" -Status $agySkillsOk `
+        -SuccessMsg "Junction ~/.gemini/config/skills -> ~/.agents/skills" `
+        -ErrorMsg "Falta el junction ~/.gemini/config/skills -> ~/.agents/skills (Antigravity no vera las skills globales)" `
+        -FixMsg "Ejecuta 'free-computer-user update' o install.ps1"
+} elseif (Test-Path $antigravityLegacy) {
+    $hasLegacy = (Get-Content $antigravityLegacy -Raw) -match "computer-user"
+    Report-Check -Name "Antigravity MCP" -Status (-not $hasLegacy) `
+        -SuccessMsg "Sin configuracion de Antigravity que migrar" `
+        -ErrorMsg "computer-user solo esta en ~/.gemini/antigravity/mcp_config.json: Antigravity no lo leera" `
+        -FixMsg "Ejecuta 'free-computer-user update' o install.ps1"
+}
+
+# Antigravity CLI: su estado vive en ~/.gemini/antigravity-cli (settings.json, mcp\
+# con los ESQUEMAS de herramientas, brain, conversations, log). NO tiene
+# mcp_config.json propio y NO tiene seccion MCP en settings.json: el CLI comparte la
+# configuracion global ~/.gemini/config/mcp_config.json (verificado en los strings
+# del binario: "Global Configuration: ~/.gemini/config/mcp_config.json (applies to
+# all sessions)" y en los logs del CLI: "stored shared config permissions ... from
+# C:\Users\User\.gemini\config\config.json"). Por eso NO hay que duplicar nada: el
+# unico riesgo es que aparezca un settings.json con seccion MCP propia (esquema
+# distinto) y el CLI deje de ver la entrada global.
+$agyCliDir = Join-Path $env:USERPROFILE ".gemini\antigravity-cli"
+if (Test-Path $agyCliDir) {
+    $agyCliSettings = Join-Path $agyCliDir "settings.json"
+    $agyCliOwnConfig = Join-Path $agyCliDir "mcp_config.json"
+    $agyCliHasMcpSection = $false
+    $agyCliMcpKey = ""
+    if (Test-Path $agyCliSettings) {
+        try {
+            $agyCliJson = Get-Content $agyCliSettings -Raw | ConvertFrom-Json
+            foreach ($key in @("mcpServers", "mcp", "enabledMcpServers", "mcp_settings")) {
+                if ($agyCliJson.PSObject.Properties.Name -contains $key) {
+                    $agyCliHasMcpSection = $true
+                    $agyCliMcpKey = $key
+                }
+            }
+        } catch {
+            $agyCliHasMcpSection = $false
+        }
+    }
+    Report-Check -Name "Antigravity CLI" -Status (-not $agyCliHasMcpSection) `
+        -SuccessMsg $(if ($hasAnti) { "comparte ~/.gemini/config/mcp_config.json (ya apunta al puente); sin config MCP propia" } else { "comparte ~/.gemini/config/mcp_config.json (falta la entrada de computer-user)" }) `
+        -ErrorMsg "settings.json del CLI define '$agyCliMcpKey': esquema MCP PROPIO que este doctor no cubre; NO se escribe a ciegas" `
+        -FixMsg "Revisa ~/.gemini/antigravity-cli/settings.json y anade computer-user a mano con el esquema de esa clave"
+    if (Test-Path $agyCliOwnConfig) {
+        Write-Host "  [AVISO] $agyCliOwnConfig existe y el doctor NO lo cubre; revisa si el CLI lee ese fichero." -ForegroundColor DarkYellow
+    }
+    Write-Host "  [NOTA] El CLI lanza sus terminales en un escritorio aislado (WinSta0\exebox-...): ahi node_repl.exe no arranca (0xc0000142). Si lanzas el CLI desde tu consola (WinSta0\Default), el servidor MCP si funciona." -ForegroundColor DarkGray
 }
 
 Write-Host ""

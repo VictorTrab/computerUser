@@ -148,4 +148,4 @@ if ($PurgeFiles) {
 
 Write-Host ""
 Write-Host "[OK] Desinstalacion completada exitosamente." -ForegroundColor Green
-Write-Host "Nota: Puedes quitar la extension 'ComputerUser Browser Bridge' desde chrome://extensions haciendo clic en 'Quitar'." -ForegroundColor Yellow
+Write-Host "Nota: Puedes quitar la extension 'Skynet Bridge' desde chrome://extensions haciendo clic en 'Quitar'." -ForegroundColor Yellow

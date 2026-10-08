@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ComputerUser Browser Bridge",
-  "version": "1.0.0",
-  "description": "Control y navegación automatizada local para ComputerUser y cualquier agente de IA.",
+  "name": "Skynet Bridge",
+  "version": "1.0.9",
+  "description": "Puente local de control de navegador para agentes de IA.",
   "action": {
     "default_icon": {
       "16": "images/icon16.png",
@@ -60,5 +60,43 @@
       ]
     }
   ],
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAhOazuVcq63ORrNxSO9m89hUyIwHvX0P/bonEEnLijmtcHDV3LX1r4XnUJeNb/hvMsgwa9VE9UlfX+E2rJZb3W2Frrl+JGWbGXBvdEUKojtbIV68ffKjlX9zrZb/sawlDMQCO3QNslN0VEBamiyjUG+kcXz18WMa10KbqOY0PJcgb7NtdHbEddNmPc+YpXlOQ1JKXY8VujQH13zivFpiS4ArbW+1/HErQ5jycPfLQeQtemfvFynRQo1WIX7PSTvmkaGdaDMseGuaz86HSP+JRgfu0unna0PK2IzlsdNlk5F6Yup9kL8iPEiHYgrgD7nW8+OKQqIODa6Tds7jPlHJPgwIDAQAB"
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAhOazuVcq63ORrNxSO9m89hUyIwHvX0P/bonEEnLijmtcHDV3LX1r4XnUJeNb/hvMsgwa9VE9UlfX+E2rJZb3W2Frrl+JGWbGXBvdEUKojtbIV68ffKjlX9zrZb/sawlDMQCO3QNslN0VEBamiyjUG+kcXz18WMa10KbqOY0PJcgb7NtdHbEddNmPc+YpXlOQ1JKXY8VujQH13zivFpiS4ArbW+1/HErQ5jycPfLQeQtemfvFynRQo1WIX7PSTvmkaGdaDMseGuaz86HSP+JRgfu0unna0PK2IzlsdNlk5F6Yup9kL8iPEiHYgrgD7nW8+OKQqIODa6Tds7jPlHJPgwIDAQAB",
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Period",
+        "mac": "Command+Shift+Period"
+      }
+    },
+    "open-codex-side-panel": {
+      "description": "Open ChatGPT side panel"
+    }
+  },
+  "content_scripts": [
+    {
+      "all_frames": false,
+      "js": [
+        "content-scripts/chatgpt-website.js"
+      ],
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "all_frames": true,
+      "js": [
+        "content-scripts/codex-work-media-permission.js"
+      ],
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "minimum_chrome_version": "116",
+  "side_panel": {
+    "default_path": "codex-sidepanel/index.html"
+  }
 }

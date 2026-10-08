@@ -170,8 +170,8 @@ class ComputerUserMcpClient:
 def load_system_prompt():
     prompt_parts = [
         "Eres un agente con control directo del escritorio Windows y del navegador.",
-        "Tienes disponible la herramienta `js` que ejecuta codigo JavaScript en el sistema local.",
-        "\n--- REGLAS DEL AGENTE ---"
+        "You have access to the `js` tool to execute persistent local automation commands.",
+        "\n--- OPERATIONAL GOVERNANCE & EXECUTION POLICY ---"
     ]
 
     rules_file = os.path.join(RULES_DIR, "AGENTS.md")

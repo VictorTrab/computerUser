@@ -87,11 +87,10 @@ Report-Check -Name "Manifest V3" -Status $extExists `
 Write-Host "      -> Para cargar en Chrome/Brave: activa 'Modo Desarrollador' en chrome://extensions y carga descomprimida:" -ForegroundColor DarkGray
 Write-Host "         $InstallDir\extension" -ForegroundColor DarkGray
 
-# 4. Skills Globales en ~/.agents y ~/.dsh
+# 4. Skills Globales en ~/.agents
 Write-Host ""
 Write-Host "[4/6] Verificando Skills de Agentes..." -ForegroundColor Cyan
 $globalSkills = Join-Path $env:USERPROFILE ".agents\skills"
-$dshSkills = Join-Path $env:USERPROFILE ".dsh\skills"
 
 $gCu = Test-Path (Join-Path $globalSkills "free-computer-user\SKILL.md")
 $gCh = Test-Path (Join-Path $globalSkills "free-control-chrome\SKILL.md")
@@ -99,14 +98,6 @@ Report-Check -Name "Skills Globales (~/.agents)" -Status ($gCu -and $gCh) `
     -SuccessMsg "free-computer-user y free-control-chrome instaladas" `
     -ErrorMsg "Faltan skills en ~/.agents\skills" `
     -FixMsg "Ejecuta 'free-computer-user update' para desplegarlas"
-
-if (Test-Path (Join-Path $env:USERPROFILE ".dsh")) {
-    $dCu = Test-Path (Join-Path $dshSkills "free-computer-user\SKILL.md")
-    $dCh = Test-Path (Join-Path $dshSkills "free-control-chrome\SKILL.md")
-    Report-Check -Name "Skills DeepSeek (~/.dsh)" -Status ($dCu -and $dCh) `
-        -SuccessMsg "Sincronizadas con DeepSeek Harness" `
-        -ErrorMsg "Faltan skills en ~/.dsh\skills"
-}
 
 # 5. Configuración de Seguridad y Allowlist
 Write-Host ""

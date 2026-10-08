@@ -137,26 +137,23 @@ foreach ($r in $regTargets) {
     Write-Host "  [OK] $r" -ForegroundColor Green
 }
 
-# 4. Instalar Skills Globales en ~/.agents y ~/.dsh
-Write-Host "[4/7] Desplegando skills globales (free-computer-user y free-control-chrome)..." -ForegroundColor Gray
+# 4. Instalar Skills Globales en ~/.agents
+Write-Host "[4/7] Desplegando skills globales en ~/.agents\skills..." -ForegroundColor Gray
 
 $globalSkillsDir = Join-Path $env:USERPROFILE ".agents\skills"
-$dshSkillsDir = Join-Path $env:USERPROFILE ".dsh\skills"
 
-foreach ($targetDir in @($globalSkillsDir, $dshSkillsDir)) {
-    # Limpiar nombres legados
-    Remove-Item -Recurse -Force (Join-Path $targetDir "computer-use-windows") -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force (Join-Path $targetDir "control-chrome") -ErrorAction SilentlyContinue
+# Limpiar nombres legados
+Remove-Item -Recurse -Force (Join-Path $globalSkillsDir "computer-use-windows") -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force (Join-Path $globalSkillsDir "control-chrome") -ErrorAction SilentlyContinue
 
-    # Instalar nuevos nombres
-    $cuDir = Join-Path $targetDir "free-computer-user"
-    $chromeDir = Join-Path $targetDir "free-control-chrome"
-    New-Item -ItemType Directory -Path $cuDir -Force | Out-Null
-    New-Item -ItemType Directory -Path $chromeDir -Force | Out-Null
-    
-    Copy-Item (Join-Path $InstallDir "skills\free-computer-user\SKILL.md") (Join-Path $cuDir "SKILL.md") -Force
-    Copy-Item (Join-Path $InstallDir "skills\free-control-chrome\SKILL.md") (Join-Path $chromeDir "SKILL.md") -Force
-}
+# Instalar en ~/.agents\skills
+$cuDir = Join-Path $globalSkillsDir "free-computer-user"
+$chromeDir = Join-Path $globalSkillsDir "free-control-chrome"
+New-Item -ItemType Directory -Path $cuDir -Force | Out-Null
+New-Item -ItemType Directory -Path $chromeDir -Force | Out-Null
+
+Copy-Item (Join-Path $InstallDir "skills\free-computer-user\SKILL.md") (Join-Path $cuDir "SKILL.md") -Force
+Copy-Item (Join-Path $InstallDir "skills\free-control-chrome\SKILL.md") (Join-Path $chromeDir "SKILL.md") -Force
 
 # Eliminar carpeta skills duplicada del directorio del motor para no duplicar contexto
 $devRepoPath = Join-Path $env:USERPROFILE "projects\computerUser"
@@ -165,7 +162,7 @@ if ($InstallDir -ne $devRepoPath -and (Test-Path "$InstallDir\skills")) {
     Write-Host "  -> Carpeta skills duplicada eliminada del motor (~/.free-computer-user)." -ForegroundColor DarkGray
 }
 
-Write-Host "  [OK] Skills disponibles para Cursor, Cline, OpenCode, DeepSeek y Antigravity." -ForegroundColor Green
+Write-Host "  [OK] Skills disponibles universalmente en ~/.agents\skills." -ForegroundColor Green
 
 # 5. Configurar DeepSeek Harness si existe
 Write-Host "[5/7] Verificando integracion con DeepSeek Harness (dsh)..." -ForegroundColor Gray

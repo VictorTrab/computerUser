@@ -100,7 +100,13 @@ $bridgeText = Get-Content $bridgeToCheck -Raw
 if ($bridgeText -notmatch 'server/discover' -or $bridgeText -notmatch 'x-codex-turn-metadata' -or $bridgeText -notmatch 'elicitation/create') {
     throw "runtime\bin\mcp-bridge.mjs no implementa server/discover + metadatos de turno + elicitation."
 }
-Write-Host "  [OK] Puente MCP: server/discover, metadatos de turno y elicitation presentes." -ForegroundColor Green
+# La limpieza de marcadores de interrupcion rancios al arrancar es parte del contrato de
+# v1.0.13 (ver scripts\ab-interrupt-markers.mjs): sin ella, un marcador de una sesion
+# anterior bloquea el escritorio con el mensaje de la tecla Escape.
+if ($bridgeText -notmatch 'clearStaleInterruptMarkers') {
+    throw "runtime\bin\mcp-bridge.mjs NO limpia los marcadores de interrupcion rancios al arrancar (contrato de v1.0.13)."
+}
+Write-Host "  [OK] Puente MCP: server/discover, metadatos de turno, elicitation y limpieza de marcadores." -ForegroundColor Green
 
 $patchedServices = @(
     "runtime\browser\browser-service.mjs",
@@ -259,6 +265,11 @@ if (Test-Path $stageDir) {
 }
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 
+# Contenido del paquete. `adapters\` NO viaja (v1.0.13): `universal_runner.py` era el
+# adaptador para lanzar el cliente desde el escritorio real (forzando WinSta0\Default) y
+# ni el navegador ni el escritorio verificado por el puente lo necesitan. Se queda en el
+# repositorio como herramienta de desarrollo y el zip se comprueba mas abajo para que no
+# pueda colarse.
 $itemsToInclude = @(
     "runtime",
     "extension",
@@ -267,7 +278,6 @@ $itemsToInclude = @(
     "rules",
     "bin",
     "scripts",
-    "adapters",
     "mcp_config.json",
     "README.md"
 )
@@ -386,7 +396,15 @@ if ($missingInZip.Count -gt 0) {
     Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
     throw ("El zip no contiene componentes obligatorios: " + ($missingInZip -join ", "))
 }
-Write-Host ("  [OK] Zip verificado: {0} entradas, 0 respaldos/simbolos/trazas, host nativo presente." -f $zipEntries.Count) -ForegroundColor Green
+# `adapters\` (el runner de escritorio real) NO debe viajar: no lo necesita ni el
+# navegador ni el escritorio por el puente. El guard va sobre el CONTENIDO del zip.
+$adaptersInZip = @($zipEntries | Where-Object { $_ -match '(^|/)adapters/' })
+if ($adaptersInZip.Count -gt 0) {
+    Remove-Item -Recurse -Force $stageDir -ErrorAction SilentlyContinue
+    Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
+    throw ("El zip contiene adapters\ (excluido por diseno en v1.0.13): " + ($adaptersInZip | Select-Object -First 5 | ForEach-Object { $_ }) )
+}
+Write-Host ("  [OK] Zip verificado: {0} entradas, 0 respaldos/simbolos/trazas, host nativo presente, sin adapters\." -f $zipEntries.Count) -ForegroundColor Green
 
 $zipSizeMb = [math]::Round(((Get-Item $zipPath).Length / 1MB), 2)
 Write-Host "  [OK] Creado: $zipName ($zipSizeMb MB)" -ForegroundColor Green

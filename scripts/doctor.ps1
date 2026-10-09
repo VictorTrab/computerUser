@@ -312,17 +312,37 @@ if (Test-Path $antigravityDir) {
     $agyPointsToBridge = [bool]($agyBridgeFile -and (Test-Path $agyCommand) -and (Test-Path "$agyBridgeFile"))
     $agyPointsToShim = [bool](($agyArgs | Where-Object { "$_" -match 'cu-mcp-shim' }).Count -gt 0) -or ($agyCommand -match 'cu-mcp-shim')
     $agyPointsToRepl = [bool]($agyCommand -match 'node_repl\.exe$')
-    if (-not $agyPointsToBridge) {
-        $why = if ($agyPointsToShim) { "sigue apuntando al shim manual cu-mcp-shim.mjs (ya no hace falta)" }
-        elseif ($agyPointsToRepl) { "apunta a node_repl.exe directo (muere con server/discover)" }
+    # La entrada del puente es lo que da el NAVEGADOR en Antigravity: es la ruta
+    # verificada (Brave + YouTube + Gmail, rapida). Se informa como su propia linea, y el
+    # escritorio va aparte (abajo) porque su soporte es otro asunto.
+    if ($agyPointsToBridge) {
+        Report-Check -Name "Antigravity navegador -> Puente MCP" -Status $true `
+            -SuccessMsg "command=node.exe args=[mcp-bridge.mjs --disable-sandbox]"
+    } elseif ($agyPointsToShim) {
+        # Revertir al shim manual es una decision del usuario (desbloqueo temporal) y el
+        # shim ARRANCA, asi que no es un fallo de instalacion: es un aviso. Pero conviene
+        # decir la verdad medida: el shim tambien rota `turn-<N>` en cada `tools/call`, y
+        # esa rotacion es la que invalida las capturas (`unknown screenshotId
+        # screenshot-0`) en el flujo de dos celdas. El puente v1.0.13 usa una identidad
+        # de turno estable y es la ruta recomendada.
+        Write-Host "  [AVISO] Antigravity navegador -> shim manual cu-mcp-shim.mjs (revertido a proposito; arranca, no es un fallo)" -ForegroundColor Yellow
+        Write-Host "          El shim rota turn-<N> en cada tools/call, que es la causa medida de 'unknown screenshotId screenshot-0'." -ForegroundColor Yellow
+        Write-Host "          Solucion: 'free-computer-user update' (v1.0.13+) deja la entrada en node.exe mcp-bridge.mjs --disable-sandbox." -ForegroundColor Yellow
+    } else {
+        $why = if ($agyPointsToRepl) { "apunta a node_repl.exe directo (muere con server/discover)" }
         else { "no apunta al puente mcp-bridge.mjs" }
-        Report-Check -Name "Antigravity -> Puente MCP" -Status $false `
+        Report-Check -Name "Antigravity navegador -> Puente MCP" -Status $false `
             -ErrorMsg "La entrada de computer-user $why" `
             -FixMsg "Ejecuta 'free-computer-user update' o install.ps1 (debe quedar: node.exe mcp-bridge.mjs --disable-sandbox)"
-    } else {
-        Report-Check -Name "Antigravity -> Puente MCP" -Status $true `
-            -SuccessMsg "command=node.exe args=[mcp-bridge.mjs --disable-sandbox]"
     }
+    # Escritorio (computer user) en Antigravity: NO soportado por ahora. Es un AVISO, nunca
+    # un FAIL (la integracion es correcta y el navegador funciona): el motor de escritorio
+    # funciona pero de forma INTERMITENTE alli, por la identidad de turno (el helper cierra
+    # el turno anterior al ver una clave de turno distinta) y por los marcadores de
+    # interrupcion rancios. El escritorio esta verificado en DeepSeek Harness.
+    Write-Host "  [AVISO] Antigravity escritorio (computer user) - NO soportado por ahora: funciona de forma intermitente." -ForegroundColor Yellow
+    Write-Host "          Causa conocida: identidad de turno + marcadores de interrupcion rancios (ver 'Marcadores de interrupcion' abajo)." -ForegroundColor Yellow
+    Write-Host "          En Antigravity usa el navegador (soportado); el escritorio esta verificado en DeepSeek Harness. v1.0.13 lo mitiga, no lo promete." -ForegroundColor Yellow
     # Shim manual de una version anterior: NO se borra (es del usuario), solo se avisa.
     $agyShimFile = Join-Path $antigravityDir "cu-mcp-shim.mjs"
     if (Test-Path $agyShimFile) {
@@ -379,13 +399,65 @@ if (Test-Path $agyCliDir) {
         }
     }
     Report-Check -Name "Antigravity CLI" -Status (-not $agyCliHasMcpSection) `
-        -SuccessMsg $(if ($hasAnti) { "comparte ~/.gemini/config/mcp_config.json (ya apunta al puente); sin config MCP propia" } else { "comparte ~/.gemini/config/mcp_config.json (falta la entrada de computer-user)" }) `
+        -SuccessMsg $(if ($hasAnti) { "comparte ~/.gemini/config/mcp_config.json (la entrada global de computer-user); sin config MCP propia" } else { "comparte ~/.gemini/config/mcp_config.json (falta la entrada de computer-user)" }) `
         -ErrorMsg "settings.json del CLI define '$agyCliMcpKey': esquema MCP PROPIO que este doctor no cubre; NO se escribe a ciegas" `
         -FixMsg "Revisa ~/.gemini/antigravity-cli/settings.json y anade computer-user a mano con el esquema de esa clave"
     if (Test-Path $agyCliOwnConfig) {
         Write-Host "  [AVISO] $agyCliOwnConfig existe y el doctor NO lo cubre; revisa si el CLI lee ese fichero." -ForegroundColor DarkYellow
     }
     Write-Host "  [NOTA] El CLI lanza sus terminales en un escritorio aislado (WinSta0\exebox-...): ahi node_repl.exe no arranca (0xc0000142). Si lanzas el CLI desde tu consola (WinSta0\Default), el servidor MCP si funciona." -ForegroundColor DarkGray
+}
+
+# Marcadores de interrupcion del motor. `helper_transport.js` escribe un fichero VACIO en
+#   <CODEX_HOME>\cache\computer-use\interrupts\<sesion>\<turno>
+# cuando el helper aborta porque el usuario pulso Escape, y RECHAZA toda llamada con esa
+# pareja (sesion, turno) mientras el fichero exista, con el mensaje "Computer Use was
+# stopped by the user with the physical Escape key...". Nadie lo borra: ni el helper, ni el
+# runtime, ni el cierre de turno. Una sesion nueva que reutilice la identidad (el shim
+# antiguo numeraba turn-1, turn-2... desde cero en cada proceso; cualquier cliente que
+# mande sus propios ids puede repetirlos) queda bloqueada desde la primera llamada, y solo
+# se arregla borrando el fichero a mano. El puente v1.0.13 los limpia al arrancar; aqui se
+# comprueba y se limpia exactamente lo mismo. AVISO, nunca FAIL: un marcador rancio no
+# significa instalacion rota.
+Write-Host ""
+Write-Host "  -> Marcadores de interrupcion del motor..." -ForegroundColor Gray
+$cuHome = Join-Path $InstallDir "home"
+$interruptsRoot = Join-Path $cuHome "cache\computer-use\interrupts"
+$bridgeSession = "default-mcp-session"
+$bridgeInterrupts = Join-Path $interruptsRoot $bridgeSession
+$bridgeMarkers = @()
+if (Test-Path $bridgeInterrupts) {
+    $bridgeMarkers = @(Get-ChildItem -Path $bridgeInterrupts -File -Force -ErrorAction SilentlyContinue)
+}
+if ($bridgeMarkers.Count -eq 0) {
+    Report-Check -Name "Marcadores de interrupcion" -Status $true `
+        -SuccessMsg "sin marcadores rancios en la sesion del puente ($bridgeSession)"
+} else {
+    Write-Host ("  [AVISO] Marcadores de interrupcion - {0} marcador(es) rancio(s) en {1}" -f $bridgeMarkers.Count, $bridgeInterrupts) -ForegroundColor Yellow
+    Write-Host "          Bloquean el escritorio con el mensaje de la tecla Escape (causa conocida de la intermitencia en Antigravity)." -ForegroundColor Yellow
+    $removedMarkers = 0
+    foreach ($m in $bridgeMarkers) {
+        try {
+            Remove-Item -Force $m.FullName -ErrorAction Stop
+            $removedMarkers++
+        } catch { }
+    }
+    if ($removedMarkers -eq $bridgeMarkers.Count) {
+        Write-Host ("          Limpiados los {0} (el puente v1.0.13 tambien los limpia al arrancar); no habia ninguna sesion viva detras." -f $removedMarkers) -ForegroundColor Yellow
+    } else {
+        Write-Host ("          Limpiados {0} de {1}: los que queden siguen bloqueando la sesion, borralos a mano." -f $removedMarkers, $bridgeMarkers.Count) -ForegroundColor Yellow
+    }
+}
+# Otras sesiones (Codex y clientes que mandan sus propios ids): NO se tocan, solo se
+# informan. Borrarlas podria desbloquear a proposito una sesion viva de otro cliente.
+$otherMarkerSessions = @()
+if (Test-Path $interruptsRoot) {
+    $otherMarkerSessions = @(Get-ChildItem -Path $interruptsRoot -Directory -Force -ErrorAction SilentlyContinue | Where-Object {
+        ($_.Name -ne $bridgeSession) -and (@(Get-ChildItem -Path $_.FullName -File -Force -ErrorAction SilentlyContinue).Count -gt 0)
+    })
+}
+if ($otherMarkerSessions.Count -gt 0) {
+    Write-Host ("  [NOTA] Otras sesiones con marcadores de interrupcion (no se tocan): " + (($otherMarkerSessions | ForEach-Object { $_.Name }) -join ", ")) -ForegroundColor DarkGray
 }
 
 Write-Host ""

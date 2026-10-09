@@ -26,20 +26,86 @@
 //      valida la allowlist y nadie va a dibujar el dialogo modal;
 //   4. reenvia todo lo demas en ambos sentidos, sin interpretarlo.
 //
+// TURN_ID ESTABLE (medido; A/B con cliente real sobre stdio)
+// Lo que rompe el escritorio no es que exista un `turn_id`, sino que CAMBIE entre
+// llamadas. `helper_transport.js` (el transporte del helper nativo, la ruta
+// `SKY_CUA_NATIVE_PIPE=0`) calcula una clave de turno
+// (`Q(K(meta))` = codexHome/session/turn) y, en `R`, si la clave nueva difiere de la
+// vigente, ANTES de la llamada manda `end_turn` del turno anterior al helper:
+//
+//     const i=Q(K(s)), r=this.d;                       // clave nueva / vigente
+//     null!=r && r!==i && await T(helper,"end_turn",{},this.m);
+//     this.d=i; this.m=s;
+//
+// `end_turn` cierra ese turno dentro de `codex-computer-use.exe`, que tira su registro
+// de capturas: la siguiente accion por coordenadas falla con
+// `unknown screenshotId screenshot-0` (el id por defecto de la captura) y el helper se
+// reinicializa (overlay/cursor manager arrancados otra vez) con la latencia que eso
+// cuesta. Eso es exactamente la regresion observada en Antigravity (app y CLI):
+//
+//   A puente con `turn-N` por llamada ......... drag -> "unknown screenshotId screenshot-0"
+//   B mismo puente, identidad estable ......... drag -> OK
+//   C node_repl.exe directo con `_meta` rotando drag -> "unknown screenshotId screenshot-0"
+//   C node_repl.exe directo con `_meta` estable drag -> OK
+//
+// (C prueba que el culpable es la rotacion de ids, no el puente: el shim antiguo del
+// usuario tambien rotaba `turn-<N>` por llamada y cae en lo mismo. DeepSeek Harness no
+// manda `_meta`, la clave de turno es `null` y `R` nunca dispara `end_turn`: por eso
+// ahi no se ve el fallo.)
+//
+// Por eso este puente sintetiza UNA identidad de turno y la mantiene durante toda la
+// sesion del cliente (ver "MARCADORES DE INTERRUPCION" para el otro ingrediente: los
+// ficheros de interrupcion rancios no los limpia nadie).
+//
+// MARCADORES DE INTERRUPCION RANCIOS (medido; A/B en scripts\ab-interrupt-markers.mjs)
+// `helper_transport.js` (el mismo modulo del turno) escribe un fichero VACIO en
+//
+//     <CODEX_HOME>\cache\computer-use\interrupts\<session_id>\<turn_id>
+//
+// cuando el helper aborta porque el usuario pulso Escape (`U(turnScope)`), y en CADA
+// `request` comprueba `existsSync(esa ruta)` ANTES de hablar con el helper:
+//
+//     if(null!=v&&function(t){const e=F(L,t);return r(e)}(v))
+//       return t(this,y,w,"f"),Promise.reject(new Error(I));   // I = mensaje de Escape
+//
+// Es decir: si el fichero existe, TODA llamada con esa pareja (sesion, turno) se
+// rechaza con "Computer Use was stopped by the user with the physical Escape key..."
+// sin intentarlo siquiera. Y nadie lo borra: ni el helper, ni el runtime, ni el cierre
+// de turno. Una sesion nueva que reutilice la misma pareja -el shim antiguo numeraba
+// `turn-1`, `turn-2`... desde cero en cada proceso, y cualquier cliente que mande sus
+// propios ids puede repetirlos- queda bloqueada desde la primera llamada, y solo se
+// arregla borrando el fichero a mano. Eso es la intermitencia medida en Antigravity.
+//
+//   A puente sin limpieza + marcador puesto a mano ... rechazo inmediato (Escape)
+//   B puente con limpieza + el mismo marcador ........ arranca limpio y dibuja
+//   C mismo proceso, marcador reescrito .............. vuelve a rechazar (aisla la causa)
+//
+// El sufijo aleatorio del `turn_id` sintetico es la segunda linea de defensa: aunque la
+// limpieza no llegara a correr (CODEX_HOME distinto, permisos), una sesion nueva no
+// reutiliza el turno de la anterior y no puede reactivar su marcador.
+//
+// Por eso, al arrancar, el puente borra los marcadores de SU sesion
+// (`<CODEX_HOME>\cache\computer-use\interrupts\<SYNTHETIC_SESSION_ID>\*`). Es seguro:
+// son estado de una interrupcion YA ocurrida, no hay ninguna otra sesion viva que los
+// consulte (el proceso acaba de empezar) y el transporte que ya rechazo una llamada
+// mantiene su propio bloqueo en memoria, asi que borrar el fichero no desbloquea una
+// sesion en curso. Solo se toca NUESTRA carpeta de sesion, nunca la de otro cliente.
+//
 // TURN_ENDED (medido)
 // `tools/call turn_ended` es la senal de fin de turno: `node_repl` la reenvia a las
 // librerias de confianza y `browser-service.mjs` (la unica que registra un handler)
 // la usa para soltar la sesion de navegador. Ese handler compara el `turn_id` del
 // EVENTO (los argumentos de la llamada) con el del turno vigente, asi que un
-// `turn_ended` que llegue con un turno distinto NO suelta nada. Como este puente
-// sintetiza un `turn_id` nuevo por cada `tools/call`, la llamada de cierre recibiria
-// el turno SIGUIENTE y el cierre nunca surtiria efecto. Por eso, cuando el cliente
-// no aporta metadatos propios:
-//   - `turn_ended` reutiliza el turno de la ULTIMA llamada (no avanza el contador);
-//   - se rellenan/ajustan `hook_event_name`, `session_id` y `turn_id` de los
-//     argumentos con ese mismo turno, para que el evento y el turno vigente casen;
-//   - el contador avanza en la siguiente llamada que no sea `turn_ended`, de modo
-//     que el turno siguiente es de verdad un turno nuevo.
+// `turn_ended` que llegue con un turno distinto NO suelta nada. Como el cliente no-Codex
+// no puede conocer el `turn_id` sintetizado, se rellenan/ajustan `hook_event_name`,
+// `session_id` y `turn_id` de los argumentos con el turno vigente.
+//
+// Cerrar NO rota la identidad: medido con el mismo cliente, `turn_ended` + hook nativo
+// a mitad de sesion no invalidan las capturas (el drag siguiente sigue funcionando) y
+// el mismo turno admite acciones despues del cierre. Mantener el id hace el cierre
+// IDEMPOTENTE y sin efecto destructivo, que es lo que exige un cliente que cierre el
+// turno varias veces o que siga trabajando despues. Lo unico que si destruye el estado
+// es `js_reset` (reinicia kernel + host de servicios): es recuperacion, no cierre.
 // Con metadatos propios del cliente (Codex, Cursor) no se toca absolutamente nada.
 //
 // FRAMING (decision documentada)
@@ -56,7 +122,8 @@
 //
 // Uso: node mcp-bridge.mjs [args-de-node_repl...]
 import { spawn } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -127,6 +194,71 @@ function trace(message) {
 
 log(`hijo: ${replPath} ${replArgs.join(" ")}`);
 trace(`START bridge pid=${process.pid} ppid=${process.ppid} repl=${replPath} args=${JSON.stringify(replArgs)}`);
+
+// ---------------------------------------------------------------------------
+// Identidad de turno sintetica del puente + limpieza de marcadores rancios.
+// Ver "TURN_ID ESTABLE" y "MARCADORES DE INTERRUPCION RANCIOS" en la cabecera.
+// ---------------------------------------------------------------------------
+// Una sola sesion logica para todo el puente: es la carpeta bajo
+// `cache\computer-use\interrupts\` que este proceso limpia y la que usan los
+// metadatos sinteticos y `turn_ended`.
+const SYNTHETIC_SESSION_ID = "default-mcp-session";
+
+// Mismo calculo que `helper_transport.js` (su `X()`): CODEX_HOME si esta definido y no
+// vacio; si no, `%USERPROFILE%\.codex` en Windows y `~/.codex` en el resto.
+function resolveCodexHome() {
+  const fromEnv = (process.env.CODEX_HOME ?? "").trim();
+  if (fromEnv) return fromEnv;
+  const profile = (process.env.USERPROFILE ?? "").trim();
+  if (process.platform === "win32" && profile) return join(profile, ".codex");
+  return join(homedir(), ".codex");
+}
+
+// Carpeta de marcadores de interrupcion de NUESTRA sesion (nada mas).
+function interruptSessionDir() {
+  return join(resolveCodexHome(), "cache", "computer-use", "interrupts", SYNTHETIC_SESSION_ID);
+}
+
+// Borra los marcadores de interrupcion de esta sesion. Devuelve cuantos borro.
+// Nunca lanza: si algo falla (permisos, ruta rara) se anota y el puente sigue; un
+// marcador rancio es un estorbo, no un motivo para no arrancar.
+function clearStaleInterruptMarkers() {
+  const dir = interruptSessionDir();
+  let entries;
+  try {
+    if (!existsSync(dir)) {
+      trace(`marcadores de interrupcion: ${dir} no existe (nada que limpiar)`);
+      return 0;
+    }
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    log(`no se pudo leer ${dir}: ${err.message}`);
+    trace(`marcadores de interrupcion: lectura fallida (${err.message})`);
+    return 0;
+  }
+  let removed = 0;
+  for (const entry of entries) {
+    // Solo ficheros (los marcadores son ficheros vacios); los directorios se respetan.
+    if (!entry.isFile()) continue;
+    try {
+      rmSync(join(dir, entry.name), { force: true });
+      removed++;
+      trace(`marcador de interrupcion rancio borrado: ${SYNTHETIC_SESSION_ID}/${entry.name}`);
+    } catch (err) {
+      trace(`marcador de interrupcion NO borrado (${entry.name}): ${err.message}`);
+    }
+  }
+  log(
+    removed > 0
+      ? `limpiados ${removed} marcador(es) de interrupcion rancio(s) de la sesion ${SYNTHETIC_SESSION_ID}`
+      : `sin marcadores de interrupcion rancios en la sesion ${SYNTHETIC_SESSION_ID}`
+  );
+  return removed;
+}
+
+// Antes de lanzar el hijo: una interrupcion (Escape) de una ejecucion anterior no puede
+// bloquear esta sesion.
+clearStaleInterruptMarkers();
 
 const child = spawn(replPath, replArgs, {
   // stderr se HEREDA (no se captura): si se pipea sin consumir, el buffer se llena
@@ -218,12 +350,25 @@ function writeToClient(obj) {
 // ---------------------------------------------------------------------------
 // Sentido CLIENTE -> HIJO
 // ---------------------------------------------------------------------------
-let turnSeq = 0;
 let sawDiscover = false;
 let sawInitialize = false;
-// Ultimo turno sintetizado por el puente: `{ session_id, turn_id, thread_source }`.
-// `turn_ended` lo reutiliza para que el evento y el turno vigente coincidan.
-let lastSyntheticTurn = null;
+// Identidad de turno sintetica: UNA sola por proceso del puente (ver "TURN_ID
+// ESTABLE" arriba). `turn_ended` la reutiliza, de modo que el evento y el turno
+// vigente casan siempre y el cierre es idempotente. El `session_id` es
+// `SYNTHETIC_SESSION_ID` (definido arriba, junto a la limpieza de marcadores).
+let syntheticTurn = null;
+
+function syntheticTurnMetadata() {
+  if (!syntheticTurn) {
+    const entropy = Math.random().toString(36).slice(2, 10);
+    syntheticTurn = {
+      session_id: SYNTHETIC_SESSION_ID,
+      turn_id: `turn-${process.pid.toString(36)}-${entropy}`,
+      thread_source: "user",
+    };
+  }
+  return syntheticTurn;
+}
 
 const TURN_ENDED_TOOL = "turn_ended";
 
@@ -242,9 +387,10 @@ function normalizeTurnEndedArguments(args, turn) {
   if (typeof out.turn_id !== "string" || out.turn_id.trim() === "") {
     out.turn_id = turn.turn_id;
   }
-  // Un cliente no-Codex no puede conocer el `turn_id` sintetizado (cambia en cada
-  // llamada): si manda otro, mandan los del turno que acaba de correr. Sin esto el
-  // handler de `browser-service` no reconoce el turno y no suelta la sesion.
+  // Un cliente no-Codex no puede conocer el `turn_id` sintetizado: si manda otro,
+  // mandan los del turno vigente. Sin esto el handler de `browser-service` no
+  // reconoce el turno y no suelta la sesion. El id sintetizado es estable durante
+  // toda la sesion, asi que cerrar dos veces es inofensivo.
   if (out.session_id !== turn.session_id) {
     trace(`turn_ended: session_id del cliente (${out.session_id}) sustituido por el del turno (${turn.session_id})`);
     out.session_id = turn.session_id;
@@ -289,24 +435,16 @@ createJsonlReader(
       const clientProvidedMeta = meta["x-codex-turn-metadata"] != null;
       if (!clientProvidedMeta) {
         const toolName = msg.params.name;
-        // Un turno por `tools/call` con id creciente: eso es exactamente lo que
-        // `browser-service` espera de `turn_id`, y mantiene la sesion estable
-        // (`session_id`) durante toda la conversacion. `turn_ended` es la excepcion:
-        // cierra el turno que acaba de correr, no abre uno nuevo.
-        const turn =
-          toolName === TURN_ENDED_TOOL && lastSyntheticTurn
-            ? lastSyntheticTurn
-            : {
-                session_id: "default-mcp-session",
-                turn_id: `turn-${++turnSeq}`,
-                thread_source: "user",
-              };
+        // La MISMA identidad para toda la sesion del cliente: un `turn_id` nuevo por
+        // llamada hace que el helper cierre el turno anterior en cada `tools/call`
+        // (`end_turn`), lo que tira su registro de capturas ("unknown screenshotId")
+        // y reinicializa el overlay. Ver "TURN_ID ESTABLE" arriba.
+        const turn = syntheticTurnMetadata();
         meta["x-codex-turn-metadata"] = JSON.stringify(turn);
         if (toolName === TURN_ENDED_TOOL) {
           msg.params.arguments = normalizeTurnEndedArguments(msg.params.arguments, turn);
           trace(`turn_ended normalizado al turno vigente ${turn.session_id}/${turn.turn_id}`);
         } else {
-          lastSyntheticTurn = turn;
           trace(`inyectado x-codex-turn-metadata en tools/call (${toolName ?? "?"}) -> ${turn.turn_id}`);
         }
       } else if (msg.params.name === TURN_ENDED_TOOL) {

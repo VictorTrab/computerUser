@@ -9,6 +9,12 @@ Drive the user's **own** browser session (their profile, cookies and logins) thr
 
 Execution happens through persistent JavaScript in the `js` MCP tool.
 
+**Verified clients (v1.0.13).** This skill is verified end to end in **DeepSeek Harness** and in
+**Antigravity** (app and CLI) through the local bridge (`runtime\bin\mcp-bridge.mjs`, registered in
+`~/.gemini/config/mcp_config.json`): Brave + YouTube + Gmail, fast. The **desktop** half
+(`free-computer-user`) is **not** supported in Antigravity for now — see the warning at the top of that
+skill.
+
 ## 0. Choosing the browser
 
 | Situation | What to do |
@@ -146,31 +152,32 @@ Exports: `tab.content.export()` (page → file), `tab.content.exportGsuite("pdf"
 - **Ephemeral** (throwaway searches): `await tab.close();` before finishing.
 - **Tabs claimed from the user**: never close them; just release them.
 
-## 7. End of turn: release the engine
+## 7. Turn identity: who closes the turn
 
-Finishing the tabs is not the end of the turn. The browser session stays attached (CDP tabs still
-attached on the agent's side) and the desktop engine stays awake with its cursor overlay until the
-turn is explicitly closed. After §6 and before your final message:
+Finishing the tabs is not closing the turn: the browser session stays attached (CDP tabs) and the
+desktop engine keeps its cursor overlay until the turn ends. That turn has an identity (`session_id` +
+`turn_id`) owned by the **client layer**, and the engine keys its caches (captures, indexes) to it.
 
-1. **Read the turn identity** with the `js` tool:
+**Do not close the turn yourself during a task or between cells.** Never call `turn_ended`, never run
+the `codex-computer-use.exe turn-ended` hook and never call `js_reset` between an observation and the
+action that uses it. Measured on this install: `js_reset` mid-session restarts the JS kernel and the
+trusted-service host and destroys the turn state (the next coordinate action fails with
+`unknown screenshotId screenshot-0`); `turn_ended` and the hook are harmless for captures but release
+what only the end of turn should release, and they are not your job.
 
-   ```js
-   const meta = JSON.parse(nodeRepl.requestMeta?.["x-codex-turn-metadata"] ?? "null") ?? {};
-   nodeRepl.write(JSON.stringify(meta)); // {"session_id":"...","turn_id":"..."}
-   ```
+**The turn is closed for you.** Codex / DeepSeek Harness send `turn_ended` plus the native hook at the
+end of each turn. Under the Antigravity bridge (`runtime\bin\mcp-bridge.mjs`, the Antigravity path) the
+bridge keeps **one stable turn identity per session** and rewrites `turn_ended` to it, so closing is
+idempotent and nothing is needed from you. A `turn_id` that changes between calls is what breaks
+coordinate actions (the helper sends `end_turn` for the previous turn on every call), which is why the
+bridge no longer rotates it.
 
-2. **Call the `turn_ended` tool** with `hook_event_name: "Stop"` and those `session_id` / `turn_id`
-   values. That is the end-of-turn signal (the one every Codex turn sends); it detaches the agent's
-   CDP tabs and sends `turnEnded` to the extension. Without it nothing is released and the session
-   stays on. The ids must be the real ones (the service matches them against the turn that just ran);
-   under the local bridge (`runtime\bin\mcp-bridge.mjs`, the Antigravity path) the bridge substitutes
-   the ids of the turn it injected, so guessed values are harmless there only.
-3. **If the client does not expose `turn_ended`** (missing from the tool list) or it sends no turn
-   metadata at all, close the turn with `js_reset` and say so in your final message.
-4. If the task also drove Windows apps, finish the desktop half as well: the overlay and the
-   computer-use helper are only released by the host notify hook
-   (`codex-computer-use.exe turn-ended <json>`, the command Codex runs from `<CODEX_HOME>\config.toml`),
-   not by `turn_ended`. See `free-computer-user` §9 for the exact snippet.
+**If the user reports tabs or the overlay still held** *after* the task is completely finished, first
+remember the measurements (v1.0.13): `turn_ended` detaches the browser session when the ids match, but
+the `turn-ended` hook **did not** retire the desktop overlay in our runs. What reliably releases the
+engine is the client ending the session: the bridge kills `node_repl.exe` and the helper goes with it.
+Restart the client session; `js_reset` is the very last resort and costs the whole turn state. See
+`free-computer-user` §9.
 
 A new task keeps working afterwards: the next turn reuses the engine and re-attaches tabs on demand
 (measured).

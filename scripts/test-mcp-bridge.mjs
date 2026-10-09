@@ -280,7 +280,10 @@ console.log("\n== 4. turn_ended: el puente cierra el turno vigente (SIN metadato
   if (normalized) ok(`traza del puente confirma el turno cerrado: ${beforeTurn?.session_id}/${beforeTurn?.turn_id}`);
   else fail("la traza del puente no normaliza turn_ended al turno vigente");
 
-  // 4.3 El contador SI avanza despues del cierre: lo siguiente es un turno nuevo.
+  // 4.3 La identidad NO rota con el cierre (v1.0.13): cerrar es idempotente y sigue
+  // valida. Rotarla es lo que rompia el escritorio: un `turn_id` distinto en la
+  // llamada siguiente hace que el helper mande `end_turn` del turno anterior y tire su
+  // registro de capturas (`unknown screenshotId screenshot-0`).
   const after = await rpc(
     "tools/call",
     { name: "js", arguments: { code: READ_TURN_META, timeout_ms: 60000 } },
@@ -291,8 +294,9 @@ console.log("\n== 4. turn_ended: el puente cierra el turno vigente (SIN metadato
     afterTurn = JSON.parse(extractPayload(after.result))?.meta ?? null;
   } catch {}
   if (!afterTurn?.turn_id) fail("no se pudo leer el turno inyectado tras turn_ended");
-  else if (afterTurn.turn_id === beforeTurn?.turn_id) fail(`tras turn_ended el turno no avanzo (${afterTurn.turn_id})`);
-  else ok(`tras turn_ended el turno avanza: ${beforeTurn?.turn_id} -> ${afterTurn.turn_id}`);
+  else if (afterTurn.turn_id !== beforeTurn?.turn_id) fail(`tras turn_ended la identidad cambio (${beforeTurn?.turn_id} -> ${afterTurn.turn_id})`);
+  else if (afterTurn.session_id !== beforeTurn?.session_id) fail("tras turn_ended cambio el session_id");
+  else ok(`tras turn_ended la identidad se mantiene (idempotente): ${afterTurn.session_id}/${afterTurn.turn_id}`);
   if (endedText && /requires non-empty/i.test(endedText)) fail("node_repl rechazo los identificadores: " + endedText.slice(0, 200));
 }
 

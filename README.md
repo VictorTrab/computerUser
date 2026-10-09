@@ -31,6 +31,30 @@
 
 ---
 
+## Compatibilidad (v1.0.13)
+
+Tabla honesta de lo verificado. **Soportado** = probado de extremo a extremo en esa combinación.
+**No soportado por ahora** = puede funcionar, pero falla de forma **intermitente** y no se promete.
+
+| Cliente | Navegador (`free-control-browser`) | Escritorio / computer user (`free-computer-user`) |
+| :-- | :-- | :-- |
+| **Antigravity** (app y CLI) | **Soportado**: verificado con Brave + YouTube + Gmail (rápido), a través del puente MCP | **No soportado por ahora**: funciona pero es **intermitente**. Causa conocida: identidad de turno y marcadores de interrupción rancios |
+| **DeepSeek Harness** | **Soportado** | **Soportado** (es donde está verificado) |
+| **Otros clientes MCP estándar** (Cursor, Claude Code…) | Genérico y **opcional**: `runtime\bin\mcp-bridge.mjs` es un adaptador MCP stdio sin nada específico de un cliente; úsalo si tu cliente abre con `server/discover` | Genérico, sin verificación específica: el escritorio necesita metadatos de turno **estables** (el puente los inyecta) |
+
+Matices que conviene tener a mano:
+
+- El **escritorio en Antigravity no está retirado**: la integración (entrada del puente en
+  `~/.gemini/config/mcp_config.json` y junction de skills) se mantiene porque el **navegador depende
+  de ella**. Lo que no se promete es la fiabilidad del computer user allí. Si el cliente es
+  Antigravity, usa el navegador.
+- `adapters\universal_runner.py` era el adaptador para lanzar el cliente desde el escritorio real
+  (forzando `WinSta0\Default`). El **navegador no lo necesita** y el escritorio verificado va por el
+  puente, así que **no viaja en el paquete**: se queda en el repositorio como herramienta de
+  desarrollo (ver «Estructura del Sistema» y `scripts\package.ps1`).
+
+---
+
 ## Instalación
 
 En una terminal de PowerShell, ejecuta:
@@ -135,12 +159,22 @@ free-computer-user/
 │   ├── smoke-test.ps1             # Smoke test del puente (sin navegador real)
 │   ├── smoke-browser-bridge.mjs
 │   ├── test-mcp-bridge.mjs        # Prueba directa del puente stdio (discover/initialize/tools)
+│   ├── e2e-browser-bridge.mjs     # E2E real de navegador por el puente (Brave + YouTube)
+│   ├── e2e-mcp-bridge.mjs         # E2E real de escritorio por el puente (Calculadora + captura)
+│   ├── ab-turn-identity.mjs       # A/B: identidad de turno estable vs `turn-<N>` rotativo
+│   ├── ab-turn-closure.mjs        # A/B: cerrar el turno a mano no invalida el estado
+│   ├── ab-interrupt-markers.mjs   # A/B: marcadores de interrupcion rancios (Escape)
 │   ├── verify-turn-metadata-patch.mjs  # A/B: el parche de metadatos es necesario y suficiente
 │   ├── patch-turn-metadata.mjs    # Wrapper del aplicador que vive en runtime\browser
 │   └── package.ps1                # Empaquetador CI/CD (valida + empaqueta)
-└── adapters/
-    └── universal_runner.py        # Runner CLI para pruebas directas
+└── adapters/                      # Solo en el repo: NO viaja en el paquete
+    └── universal_runner.py        # Runner CLI para lanzar el cliente desde el escritorio real
 ```
+
+`adapters\universal_runner.py` **no se empaqueta** (excluido en `scripts\package.ps1`, que aborta si
+aparece en el zip): era la via para lanzar el cliente desde el escritorio real forzando
+`WinSta0\Default`, y ni el navegador ni el escritorio verificado por el puente lo necesitan. Se
+conserva en el repositorio como herramienta de desarrollo.
 
 ---
 
@@ -168,6 +202,18 @@ Además, y también dentro del empaquetado:
 node scripts\test-mcp-bridge.mjs . --fast      # añade --full para list_apps + listBrowsers
 # A/B del parche de metadatos de turno (demuestra que el parche es necesario y suficiente)
 node scripts\verify-turn-metadata-patch.mjs .
+# A/B de la identidad de turno: `turn-<N>` rotativo falla, identidad estable funciona
+node scripts\ab-turn-identity.mjs install        # puente instalado (antes del arreglo)
+node scripts\ab-turn-identity.mjs repo           # puente del repo (debe dar OK)
+node scripts\ab-turn-identity.mjs direct-rotating
+# A/B del cierre a mitad de sesion: turn_ended y el hook no rompen el estado; js_reset si
+node scripts\ab-turn-closure.mjs none ; node scripts\ab-turn-closure.mjs tool ; node scripts\ab-turn-closure.mjs reset
+# A/B de los marcadores de interrupcion (escritorio): antes bloquea, despues limpia y dibuja
+node scripts\ab-interrupt-markers.mjs before ; node scripts\ab-interrupt-markers.mjs after
+# E2E real de navegador por el puente (Brave + YouTube): pestana, DOM y captura
+node scripts\e2e-browser-bridge.mjs --browser brave --url https://www.youtube.com
+# Sonda del overlay (`CodexComputerUseCursorOverlay`) y del hijo --system-cursor-manager
+powershell -NoProfile -File scripts\probe-overlay.ps1 -Label antes
 ```
 
 ---
@@ -231,7 +277,9 @@ como `command` en los clientes no-Codex:
    misma tubería y el mismo proceso;
 2. inyecta `_meta["x-codex-turn-metadata"]` (`session_id` / `turn_id` / `thread_source`) en cada
    `tools/call` cuando el cliente no lo manda — los clientes no-Codex no lo mandan, y
-   `browser-service.mjs` abortaba con `Missing required Codex turn metadata`;
+   `browser-service.mjs` abortaba con `Missing required Codex turn metadata`. La identidad que inyecta
+   es **una sola y estable durante toda la sesión del cliente** (v1.0.13; ver «Identidad de turno»
+   más abajo);
 3. auto-responde `elicitation/create` del hijo con `{"action":"accept","content":{"persist":"session"}}`
    (`sky-guard` ya validó la allowlist, así que nadie dibuja el diálogo modal);
 4. reenvía todo lo demás en ambos sentidos, preservando el framing (una línea JSON por mensaje).
@@ -295,7 +343,20 @@ la instalación real, con el servidor MCP vivo:
 | :-- | :-- | :-- | :-- | :-- |
 | Tarea terminada, sin cierre | vivo | vivo | visible | no |
 | Tras `turn_ended` (herramienta MCP) | vivo | vivo | **visible** | sí (si los ids casan) |
-| Tras el hook `notify` | vivo (se reutiliza) | **muerto** | **ninguno** | — |
+| Tras el hook `notify` (v1.0.12) | vivo (se reutiliza) | **muerto** | **ninguno** | — |
+| Tras el hook `notify` (v1.0.13, re-medido) | vivo | **vivo** | **visible** | — |
+| Tras cerrar el cliente (el puente mata `node_repl.exe`) | muerto | muerto | ninguno | — |
+| Tras `js_reset` | muerto | muerto | ninguno | — |
+
+**Corrección medida en v1.0.13.** La fila del hook de v1.0.12 **no** se reproduce hoy en la instalación
+standalone (`SKY_CUA_NATIVE_PIPE=0`): disparando `codex-computer-use.exe turn-ended` con los ids reales
+leídos de `nodeRepl.requestMeta["x-codex-turn-metadata"]` **y** también con ids simples
+(`cu-hook-test` / `turn-1`), la ventana `CodexComputerUseCursorOverlay` y el hijo
+`--system-cursor-manager` siguen vivos (sonda `scripts\probe-overlay.ps1`). El evento con nombre que
+espera el helper (`Local\CodexComputerUseTurnEnded-*`) tampoco aparece entre los candidatos construidos
+con esos ids. Lo que **sí** libera el motor, medido: que termine el proceso cliente (el puente mata
+`node_repl.exe` y el helper se va con él) o `js_reset`. Por eso las skills ya no mandan cerrar a mano:
+es innecesario y puede no funcionar.
 
 Hay por tanto **dos** mecanismos, y ninguno sustituye al otro:
 
@@ -305,37 +366,110 @@ Hay por tanto **dos** mecanismos, y ninguno sustituye al otro:
    (`clipboard.cleanupPageClipboards()` + `cdp.detachAllTabs()`) y manda `turnEnded` a la extensión.
    `@oai/sky` no la ve: el motor de escritorio no se entera.
 2. **El hook nativo** `codex-computer-use.exe turn-ended <json>` (el `notify` que Codex escribe en
-   `<CODEX_HOME>\config.toml`). Es lo único que retira el overlay y el `--system-cursor-manager`
-   (señala el evento `Local\CodexComputerUseTurnEnded-*`). **Los identificadores importan**: con un
+   `<CODEX_HOME>\config.toml`). Según su diseño retira el overlay y el `--system-cursor-manager`
+   (señala el evento `Local\CodexComputerUseTurnEnded-*`) y los identificadores importan: con un
    `session_id`/`turn_id` que no sean los del turno que acaba de correr, el evento no casa y no libera
-   nada (medido). Por eso hay que leerlos del propio runtime con
-   `nodeRepl.requestMeta["x-codex-turn-metadata"]` y usar los mismos en las dos llamadas.
+   nada. **Aviso medido**: en la instalación standalone actual el hook no retiró el overlay ni con los
+   ids reales ni con ids simples (ver la corrección de arriba).
 
 **Quién lo hace ahora**
 
-- **Skills** (`free-computer-user` §9 y `free-control-browser` §7): instruyen al agente para leer los
-  identificadores y cerrar el turno con `turn_ended` + el hook. Si el cliente no expone `turn_ended`
-  (no aparece en `tools/list`) **o no manda metadatos de turno**, el cierre es `js_reset` y se avisa en
-  el mensaje final: `js_reset` reinicia el kernel de JS y el host de servicios de confianza, así que se
-  lleva por delante al helper, al cursor manager y al overlay (medido: los tres desaparecen y el
-  siguiente `js` los vuelve a levantar).
-- **Puente MCP** (`runtime\bin\mcp-bridge.mjs`, el camino de Antigravity): sintetiza un `turn_id` por
-  llamada, así que un `turn_ended` del cliente recibiría el turno **siguiente** y el cierre no surtiría
-  efecto. Ahora **normaliza** `turn_ended`: reutiliza el turno de la última llamada, rellena
-  `hook_event_name`/`session_id`/`turn_id` con ese turno y sólo avanza el contador en la llamada
-  siguiente. Verificado en `scripts\test-mcp-bridge.mjs` y de extremo a extremo con el navegador real
-  (el frame `turnEnded` llega con los ids del turno vigente).
-- **Adaptador** (`adapters\universal_runner.py`): genera la identidad del turno, la manda en `_meta` en
-  cada `tools/call` y cierra el turno al salir del bucle (también si el LLM falla o se agotan los
-  pasos): `turn_ended` + hook nativo, best-effort.
+- **Skills** (`free-computer-user` §9 y `free-control-browser` §7): instruyen al agente para **no**
+  cerrar el turno a mano — ni `turn_ended`, ni el hook nativo, ni `js_reset` durante la tarea ni entre
+  celdas. El cierre es de la **capa cliente** (Codex/DSH lo mandan al final del turno; el puente lo
+  normaliza). Solo como último recurso, si el cliente no cierra nada y el usuario reporta el overlay o
+  pestañas retenidas con la tarea ya terminada, se cierra una vez y se avisa en el mensaje final.
+  `js_reset` deja de ser el «cierre de emergencia» por metadatos vacíos: los metadatos vacíos no son un
+  error (DeepSeek Harness no manda ninguno y el camino de escritorio funciona).
+- **Puente MCP** (`runtime\bin\mcp-bridge.mjs`, el camino de Antigravity): mantiene **una identidad de
+  turno estable** por sesión y **normaliza** `turn_ended` a ella (rellena
+  `hook_event_name`/`session_id`/`turn_id` si el cliente no los conoce). Así el cierre surte efecto con
+  los ids vigentes y repetirlo es inofensivo; nunca rota la identidad, que es lo que rompía el
+  escritorio (ver la tabla A/B/C siguiente). El sufijo aleatorio del `turn_id` evita reactivar un
+  fichero de interrupción rancio (`<CODEX_HOME>\cache\computer-use\interrupts\<sesión>\<turno>`, que
+  nadie limpia) de una sesión anterior.
+- **Adaptador** (`adapters\universal_runner.py`, **solo en el repo: no viaja en el paquete**):
+  genera la identidad del turno (una por turno del bucle, **estable dentro del turno**), la manda en
+  `_meta` en cada `tools/call` y cierra el turno al salir del bucle (también si el LLM falla o se
+  agotan los pasos): `turn_ended` + hook nativo, best-effort.
 - **Arnés de pruebas** (`dev\harness.mjs`): igual, al cerrar el turno (`end_of_turn`), con
   `park_ms` para poder medir la liberación desde fuera.
 
+**Identidad de turno: por qué es estable y no rota (v1.0.13, medido)**
+
+El transporte del helper nativo (`helper_transport.js`, la ruta `SKY_CUA_NATIVE_PIPE=0`) calcula una
+clave de turno (`codexHome/session/turn`) y, cuando llega una llamada con una clave **distinta**, manda
+`end_turn` del turno anterior al helper **antes** de ejecutar la nueva. `end_turn` cierra ese turno
+dentro de `codex-computer-use.exe`, que tira su registro de capturas: la siguiente acción por
+coordenadas falla con `unknown screenshotId screenshot-0` y el helper se reinicializa (overlay y cursor
+manager arrancados otra vez) con la latencia que eso cuesta. Medido A/B con un cliente real por stdio
+sobre Paint (`scripts\ab-turn-identity.mjs`, informes en `%TEMP%\cu-ab\*.json`):
+
+| Variante | Identidad de turno | `sky.drag` con el `screenshotId` de la captura anterior |
+| :-- | :-- | :-- |
+| **A** · puente instalado v1.0.12 | `turn-<N>` nuevo en cada `tools/call` | **falla**: `unknown screenshotId screenshot-0` |
+| **B** · el mismo puente, ids estables | una identidad para toda la sesión | **OK** |
+| **C** · `node_repl.exe` directo | `_meta` rotando por llamada | **falla**: `unknown screenshotId screenshot-0` |
+| **C** · `node_repl.exe` directo | `_meta` estable | **OK** |
+
+C aísla la causa: **no** es el puente, es la rotación de identificadores (el shim manual antiguo rotaba
+`turn-<N>` por llamada y cae en lo mismo). DeepSeek Harness no manda `_meta`, así que la clave de turno
+es `null` y `end_turn` nunca dispara: por eso ahí no se ve el fallo.
+
+**D · cerrar el turno a mano no invalida el estado (medido).** Con identidad estable y el mismo cliente
+(`scripts\ab-turn-closure.mjs`): `tools/call turn_ended` a mitad de sesión → el `drag` siguiente
+**funciona**; hook nativo (`codex-computer-use.exe turn-ended`) a mitad de sesión → **funciona**; ambos
+juntos → **funciona**; `js_reset` a mitad de sesión → **falla con `unknown screenshotId screenshot-0`**
+(reinicia kernel y host de servicios, que se llevan por delante al helper y su registro). Conclusión: el
+cierre es idempotente y no destructivo, `js_reset` no es un cierre sino una recuperación, y por eso el
+agente no debe usar ninguno de los tres a mitad de tarea.
+
 **Alcance del parche de metadatos.** El parche de `browser-service.mjs` evita el aborto de la guardia
 (`Missing required Codex turn metadata`) pero **no** basta para cerrar un turno sin metadatos: las
-lecturas internas del servicio siguen viendo el `requestMeta` del RPC. Para un cliente que no manda
-`_meta` el cierre fiable es `js_reset` (por eso el puente, que sí inyecta metadatos de verdad, es el
-camino recomendado en clientes no-Codex).
+lecturas internas del servicio siguen viendo el `requestMeta` del RPC. Por eso el camino recomendado en
+clientes no-Codex es el puente (o el adaptador), que inyectan metadatos de verdad; `js_reset` no es un
+cierre sino el último recurso para un helper muerto o atascado, una sola vez y al final.
+
+---
+
+## Marcadores de interrupción rancios (Escape)
+
+`helper_transport.js` —el mismo módulo que gobierna la identidad de turno— escribe un fichero
+**vacío** en
+
+```text
+<CODEX_HOME>\cache\computer-use\interrupts\<session_id>\<turn_id>
+```
+
+cuando el helper aborta porque el usuario pulsó **Escape**, y en **cada** `request` comprueba
+`existsSync(esa ruta)` **antes** de hablar con el helper: si el fichero existe, rechaza la llamada con
+`Computer Use was stopped by the user with the physical Escape key…` sin intentarlo. Nadie lo borra:
+ni el helper, ni el runtime, ni el cierre de turno.
+
+Consecuencia: si una ejecución nueva reutiliza la misma pareja (sesión, turno), el escritorio queda
+bloqueado desde la primera llamada y solo se arregla borrando el fichero a mano. Es exactamente lo
+que pasó aquí (`turn-15`, `turn-4`, `turn-8jk-…` bajo `…\interrupts\default-mcp-session\`): el shim
+antiguo numeraba `turn-1`, `turn-2`… **desde cero en cada proceso**, así que el marcador de una sesión
+anterior volvía a casar con la siguiente.
+
+**Arreglo (v1.0.13):** el puente **borra al arrancar** los marcadores de su sesión
+(`<CODEX_HOME>\cache\computer-use\interrupts\default-mcp-session\*`) y mantiene el `turn_id` con
+sufijo aleatorio como segunda línea de defensa. Solo toca **su** carpeta: los marcadores de otras
+sesiones (Codex, clientes que mandan sus propios ids) no se tocan y `doctor` solo los informa. Borrar
+el fichero **no** desbloquea una sesión en curso: el transporte que ya rechazó una llamada mantiene el
+bloqueo en memoria. `doctor` comprueba y limpia lo mismo, con **AVISO** (nunca FAIL).
+
+**Evidencia A/B** (`scripts\ab-interrupt-markers.mjs`, informes en `%TEMP%\cu-ab\`), con un marcador
+creado a mano en la sesión del puente y un cliente real por stdio con identidad fija:
+
+| Paso | Qué se hace | Resultado medido |
+| :-- | :-- | :-- |
+| **A · antes** | Puente **sin** la limpieza (el instalado antes del arreglo) + marcador a mano | La celda 1 se rechaza: `Computer Use was stopped by the user with the physical Escape key…` |
+| **B · después** | Puente del repo (con la limpieza) + el **mismo** marcador | Traza del puente: `limpiados 2 marcador(es) de interrupcion rancio(s)`; celda 1 observa Paint (`screenshot-0`), celda 2 dibuja (`sky.drag` OK) y la captura guardada lo confirma |
+| **C · control** | El **mismo** proceso, marcador reescrito a mano, misma identidad | Vuelve a rechazarse con el mensaje de Escape: la causa es el fichero, no la limpieza |
+
+En A había además un marcador **real** de una sesión anterior (`turn-8jk-s6bxqnoe`) y la limpieza de B
+lo barrió junto con el de la prueba.
 
 ---
 

@@ -5,6 +5,13 @@ description: Control and automate Windows desktop application windows using the 
 
 # Windows Desktop Automation (`free-computer-user`)
 
+> **Client support (v1.0.13).** The desktop path is verified in **DeepSeek Harness**. In
+> **Antigravity** (app and CLI) the desktop is **NOT supported for now**: it works but is
+> **intermittent** (known cause: turn identity and stale interrupt markers under
+> `<CODEX_HOME>\cache\computer-use\interrupts\`). If the client you are running in is Antigravity, use
+> the **browser** only (`free-control-browser`). The Antigravity integration (MCP entry pointing at the
+> bridge, `~/.gemini/config/skills` junction) is intentionally kept: the browser depends on it.
+
 Execute persistent JavaScript via the `js` MCP tool to automate Windows desktop apps via UI Automation and `Windows.Graphics.Capture`.
 
 ## 0. Safety rules (non-negotiable - read before acting)
@@ -268,65 +275,86 @@ Facts confirmed in real runs; they prevent mistakes that were already made once.
 - **`sky.launch_app({ app: <id from list_apps> })` can fail** with `The "path" argument must be of type string. Received null`. That is the composite Office id (for example `Microsoft.Office.WINWORD.EXE.15`) not resolving to a launch path. Recover by passing the **executable name** instead (`"winword.exe"`, `"brave.exe"`) and then calling `list_apps` again to pick up the window it just created. The guard already matches the composite Office ids against the plain `winword.exe`-style entries, so both spellings are allowlisted.
 - **`sky.press_key({ window: targetWindow, key: "Escape" })` works and returns `null`**: useful to deselect a freshly drawn shape before capturing.
 - **Expected latency is not a hang**: the engine inserts a pause of **1-3.5 s after every input and after every `get_window_state`**, so a plain observe -> act -> observe -> act sequence costs roughly **14 s** of wall clock (4 x ~3.5 s). That is normal on the standalone install: do not assume the session died, do not restart it and do not add your own sleeps (see 6.1). Only a call that exhausts the recovery budget counts as a timeout.
-- **In Antigravity the terminals run on a secondary desktop** (`WinSta0\exebox-...`), where Windows denies `EnumWindows` and `GetCursorPos`. A `node_repl` inherited from one of those terminals therefore cannot see or drive the real desktop. Automate through the **MCP server** - Antigravity reads the server definition from `~/.gemini/config/mcp_config.json`, not from `~/.gemini/antigravity/mcp_config.json` - and do not launch `node_repl` from an Antigravity terminal. If you must start it by hand, force it back onto the interactive desktop with `CreateProcessW` and `lpDesktop = "WinSta0\\Default"`, exactly as `adapters/universal_runner.py` does. The global skills are reachable from Antigravity through the junction `~/.gemini/config/skills` -> `~/.agents/skills`.
-- **The Antigravity server entry points at the bridge, not at `node_repl.exe`**: `command` is `runtime\bin\node.exe` and `args` are `["<install>\runtime\bin\mcp-bridge.mjs", "--disable-sandbox"]`. `mcp-bridge.mjs` exists because clients built on the **MCP Go SDK** (Antigravity, Cursor) open the pipe with a `server/discover` probe (protocol `2026-07-28`); `node_repl.exe` (rmcp 1.5.0) demands `initialize` first, closes the connection (EOF) and those clients do not respawn. The bridge answers `server/discover` with `-32601` (clean fallback to `initialize` on the same pipe), injects `_meta["x-codex-turn-metadata"]` into `tools/call` when the client omits it, and auto-accepts `elicitation/create`. You never call it directly: it is transparent for `js`, `js_reset` and `turn_ended`.
+- **In Antigravity the terminals run on a secondary desktop** (`WinSta0\exebox-...`), where Windows denies `EnumWindows` and `GetCursorPos`. A `node_repl` inherited from one of those terminals therefore cannot see or drive the real desktop. Automate through the **MCP server** - Antigravity reads the server definition from `~/.gemini/config/mcp_config.json`, not from `~/.gemini/antigravity/mcp_config.json` - and do not launch `node_repl` from an Antigravity terminal. If you must start it by hand, force it back onto the interactive desktop with `CreateProcessW` and `lpDesktop = "WinSta0\\Default"`, exactly as `adapters/universal_runner.py` does. The global skills are reachable from Antigravity through the junction `~/.gemini/config/skills` -> `~/.agents/skills`. **Reminder (v1.0.13): the desktop is NOT supported in Antigravity for now** - see the note at the top of this skill; there, drive the browser instead.
+- **The Antigravity server entry points at the bridge, not at `node_repl.exe`**: `command` is `runtime\bin\node.exe` and `args` are `["<install>\runtime\bin\mcp-bridge.mjs", "--disable-sandbox"]`. `mcp-bridge.mjs` exists because clients built on the **MCP Go SDK** (Antigravity, Cursor) open the pipe with a `server/discover` probe (protocol `2026-07-28`); `node_repl.exe` (rmcp 1.5.0) demands `initialize` first, closes the connection (EOF) and those clients do not respawn. The bridge answers `server/discover` with `-32601` (clean fallback to `initialize` on the same pipe), injects `_meta["x-codex-turn-metadata"]` into `tools/call` when the client omits it, and auto-accepts `elicitation/create`. **It injects one stable `turn_id` for the whole session** (v1.0.13): a `turn_id` that changes per call makes the helper send `end_turn` for the previous turn on every call, which drops that turn's captures (`unknown screenshotId screenshot-0`) and re-initialises the overlay - the v1.0.12 regression. You never call the bridge directly: it is transparent for `js`, `js_reset` and `turn_ended`.
 - **The Antigravity CLI shares that same file**: `~/.gemini/antigravity-cli\` is its data directory (`settings.json`, `mcp\` with the cached tool schemas, `brain\`, `conversations\`, `log\`) and holds **no** `mcp_config.json`; its `settings.json` has no MCP section. The CLI reads the global `~/.gemini/config/mcp_config.json` (binary strings: *"Global Configuration: `~/.gemini/config/mcp_config.json` (applies to all sessions)"*). Honest caveat: if the CLI launches its child processes on the isolated desktop (`WinSta0\exebox-...`), `node_repl.exe` does not even start there (`0xc0000142`); run it from your own console (`WinSta0\Default`) and it works.
 - **If a call fails with `Missing required Codex turn metadata: session_id, turn_id`**, you are talking to an *unpatched* `browser-service.mjs` from a client that sends no `_meta` (any non-Codex client). Fix it with `node runtime\browser\patch-turn-metadata.mjs <copies>` over the three copies (`runtime\browser`, `@oai/browser-desktop`, `@oai/cua`), or route through `mcp-bridge.mjs`, which injects the metadata itself. `doctor` checks both.
 - **Minimum verified flow**: `list_apps` -> `launch_app` if `windows: []` -> `get_window` -> `activate_window` -> `get_window_state({ include_screenshot: true, include_text: true })` -> actions (`click` with `element_index`, or `drag` with window-relative coordinates and `screenshotId`) -> recapture to verify.
 
-## 9. End of turn: release the engine
+## 9. Turn identity: who closes the turn (read this before calling anything)
 
-The engine does **not** stand down when your last action returns. Until the turn is closed the
-computer-use helper keeps its cursor overlay on screen (class `CodexComputerUseCursorOverlay`,
-"ComputerUser is working now.. Esc to cancel"), its `--system-cursor-manager` child stays alive and
-the browser session stays attached. That is the state the next turn inherits.
+Your turn has an identity (`session_id` + `turn_id`) and the desktop engine keys its caches
+(captures, element indexes) to it. That identity belongs to the **client layer**, not to you.
 
-Close every turn in this order:
+**Never close the turn by hand during a task or between cells.** Do not call the `turn_ended` tool,
+do not run the `codex-computer-use.exe turn-ended` hook and do not call `js_reset` between an
+observation and the action that uses it, or between two steps of the same task. Measured on this
+install:
 
-1. **Finish the tabs first** - `markDeliverable`, `markHandoff`, or close the ephemeral ones
-   (`free-control-browser` §6). Never close a tab claimed from the user.
-2. **Read the turn identity** with the `js` tool. This is the same metadata the runtime uses:
+| Called mid-task | What happens |
+| --- | --- |
+| `js_reset` | Restarts the JS kernel and the trusted-service host: the turn state is destroyed, the next coordinate action fails with `unknown screenshotId screenshot-0`, and every `globalThis` binding is gone. |
+| `turn_ended` / native hook | Harmless for captures (measured: a later `drag` with the same ids still works), but it releases what only the end of turn should release, and it is not your job. |
 
-   ```js
-   const meta = JSON.parse(nodeRepl.requestMeta?.["x-codex-turn-metadata"] ?? "null") ?? {};
-   nodeRepl.write(JSON.stringify(meta)); // {"session_id":"...","turn_id":"...","thread_source":"user"}
-   ```
+**Why the identity must not change between calls** (the regression already paid for): the helper
+transport keys a turn to `codexHome/session/turn` and, when a call arrives with a *different* key, it
+sends `end_turn` for the previous turn **before** running the new one. That drops the capture registry
+of the previous turn - the next coordinate action fails with `unknown screenshotId screenshot-0` - and
+re-initialises the helper (overlay started again, extra latency). Measured A/B on this install: a
+client that sends a new `turn_id` per call fails; the same client with a stable identity works.
 
-3. **Call the `turn_ended` tool** with `hook_event_name: "Stop"` and those `session_id` / `turn_id`
-   values. That is the end-of-turn signal every Codex turn sends, and it is what detaches the
-   agent's CDP tabs and tells the extension the turn is over (`turnEnded`). Without it that cleanup
-   never runs. Repeated notifications for the same session and turn are ignored, so calling it twice
-   is harmless. **The ids have to be the real ones**: the service matches the event against the turn
-   that just ran, so a guessed `turn_id` releases nothing. Under the local bridge
-   (`runtime\bin\mcp-bridge.mjs`, the Antigravity path) the bridge substitutes the ids of the turn it
-   has been injecting, so there the placeholders are not needed but harmless.
-4. **Release the desktop engine** - this half is *not* covered by the tool (measured): call the host
-   notify hook with the **same** ids. `turn_ended` only notifies trusted libraries, and no trusted
-   library registers a computer-use handler, so `@oai/sky` never sees it. The overlay, the
-   `--system-cursor-manager` child and the "turn has ended" refusal come from
-   `codex-computer-use.exe turn-ended <json>` - the command Codex runs from `<CODEX_HOME>\config.toml`
-   (`notify = [...]`). `child_process` **is** available inside the `js` tool:
+**Interrupt markers: what actually breaks the desktop in Antigravity.** When the user presses
+**Escape**, the same transport writes an empty file at
+`<CODEX_HOME>\cache\computer-use\interrupts\<session_id>\<turn_id>` and, from then on, **rejects every
+call** whose (session, turn) pair matches that file, with *"Computer Use was stopped by the user with
+the physical Escape key..."*, without even trying. Nothing deletes it - not the helper, not the
+runtime, not the end of turn. A new run that reuses the pair is therefore blocked from its first call
+(this is what the shim did: `turn-1`, `turn-2`... restarting from 1 on every process; measured, and
+the user had to delete `turn-15`, `turn-4`, `turn-8jk-...` by hand). The v1.0.13 bridge deletes the
+markers of **its** session at startup, so a previous interrupt cannot block a new session; `doctor`
+checks and cleans the same folder. If a desktop call returns that Escape message while you did not
+press anything, it is a stale marker, not a live user interrupt: tell the user (do not loop, do not
+retry the same call) - `free-computer-user doctor` clears it, or run the bridge again.
 
-   ```js
-   const meta = JSON.parse(nodeRepl.requestMeta?.["x-codex-turn-metadata"] ?? "null") ?? {};
-   const cp = await import("node:child_process");
-   const path = await import("node:path");
-   const helper = path.join(nodeRepl.env.NODE_REPL_NODE_MODULE_DIRS ?? "", "@oai", "sky", "bin", "windows", "codex-computer-use.exe");
-   cp.execFileSync(helper, ["turn-ended", JSON.stringify({ session_id: meta.session_id, turn_id: meta.turn_id })], { timeout: 15000, encoding: "utf8" });
-   ```
+**The turn is closed for you.** Codex / DeepSeek Harness send `turn_ended` plus the native hook at the
+end of each turn, and the Antigravity bridge (`runtime\bin\mcp-bridge.mjs`) keeps **one stable
+identity per session** and rewrites `turn_ended` to it, so under the bridge closing is idempotent and
+needs nothing from you. Do the work, verify it, answer.
 
-   The payload ids are not decorative: the hook signals a turn-scoped Windows event
-   (`Local\CodexComputerUseTurnEnded-*`) and a payload naming another turn - or no turn at all -
-   releases nothing. The helper process itself stays resident (the next turn reuses it); what
-   disappears is the overlay and the cursor manager.
-5. **If the client does not expose `turn_ended`** (missing from the tool list) **or the turn metadata
-   is empty** (`nodeRepl.requestMeta["x-codex-turn-metadata"]` is absent, which is what happens with a
-   client that sends no `_meta`), close the turn with `js_reset` and say so in your final message:
-   both release mechanisms are keyed to a turn id you do not have, so neither can work. `js_reset` is
-   blunt but real: it restarts the JS kernel and the trusted-service host, which takes the
-   computer-use helper, the cursor manager and the overlay down with it, and the next `js` call
-   respawns all of them. It also drops every top-level binding, so it is the fallback, not the normal
-   path.
+**Only as a last resort** - the client exposes no automatic close and the user reports a stuck overlay
+or unreleased tabs *after* the task is completely finished - close once: read the ids with the `js`
+tool, call `turn_ended` with `hook_event_name: "Stop"`, and (desktop path only) run the native hook
+with those same ids:
 
-A new task keeps working after the release: the next turn reuses the same helper process and creates
-a fresh cursor manager and overlay on its first desktop call (measured).
+```js
+const meta = JSON.parse(nodeRepl.requestMeta?.["x-codex-turn-metadata"] ?? "null") ?? {};
+nodeRepl.write(JSON.stringify(meta)); // {"session_id":"...","turn_id":"...","thread_source":"user"}
+```
+
+```js
+const meta = JSON.parse(nodeRepl.requestMeta?.["x-codex-turn-metadata"] ?? "null") ?? {};
+const cp = await import("node:child_process");
+const path = await import("node:path");
+const helper = path.join(nodeRepl.env.NODE_REPL_NODE_MODULE_DIRS ?? "", "@oai", "sky", "bin", "windows", "codex-computer-use.exe");
+cp.execFileSync(helper, ["turn-ended", JSON.stringify({ session_id: meta.session_id, turn_id: meta.turn_id })], { timeout: 15000, encoding: "utf8" });
+```
+
+Honest measurement (v1.0.13, standalone install, `SKY_CUA_NATIVE_PIPE=0`): `turn_ended` alone does
+**not** retire the desktop overlay - it only notifies trusted libraries, and no trusted library
+registers a computer-use handler - and the `turn-ended` hook **did not retire it either** in our runs:
+with the ids read from the runtime *and* with plain ids, the `CodexComputerUseCursorOverlay` window and
+the `--system-cursor-manager` child were still alive after the hook. What actually releases the engine
+is the client ending the session: when Antigravity closes the MCP server the bridge kills
+`node_repl.exe` and the helper goes with it (measured: overlay and helper both gone). `js_reset` also
+takes the kernel, the helper and the overlay down, at the cost of the whole turn state (it is what
+destroys captures). So closing by hand is not only unnecessary, it may not even work. If the user
+reports a stuck overlay after the task, the real fix is to restart the client session; as the very last
+resort, `js_reset` once. Say in your final message what you did and why.
+
+**Never use `js_reset` as a metadata fallback.** Empty turn metadata is not an error: the desktop path
+works without it (measured - DeepSeek Harness sends none and needs none). Under the bridge the
+metadata is always injected. `js_reset` is the blunt last resort for a dead or stuck helper, once, at
+the very end.
+
+A new task keeps working after the close: the next turn reuses the same helper process and creates a
+fresh cursor manager and overlay on its first desktop call (measured).

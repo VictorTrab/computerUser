@@ -183,26 +183,50 @@ if ($extExists) {
 Write-Host "      -> Carga descomprimida (una vez por navegador): $extensionDir" -ForegroundColor DarkGray
 Write-Host "         chrome://extensions | brave://extensions | edge://extensions" -ForegroundColor DarkGray
 
-# 4. Skills Globales en ~/.agents
+# 4. Skills por arnes (v1.0.14)
 Write-Host ""
 Write-Host "[4/6] Verificando Skills de Agentes..." -ForegroundColor Cyan
-$globalSkills = Join-Path $env:USERPROFILE ".agents\skills"
+$dshSkills = Join-Path $env:USERPROFILE ".dsh\skills"
+$agentsSkills = Join-Path $env:USERPROFILE ".agents\skills"
 
-$gCu = Test-Path (Join-Path $globalSkills "free-computer-user\SKILL.md")
-$gBrowser = Test-Path (Join-Path $globalSkills "free-control-browser\SKILL.md")
-$allSkillsOk = ($gCu -and $gBrowser)
-
-Report-Check -Name "Skills Globales (~/.agents)" -Status $allSkillsOk `
+# DeepSeek Harness: AMBAS skills (escritorio + navegador) en ~/.dsh/skills.
+$dshCu = Test-Path (Join-Path $dshSkills "free-computer-user\SKILL.md")
+$dshBrowser = Test-Path (Join-Path $dshSkills "free-control-browser\SKILL.md")
+Report-Check -Name "Skills de DeepSeek Harness (~/.dsh/skills)" -Status ($dshCu -and $dshBrowser) `
     -SuccessMsg "free-computer-user y free-control-browser instaladas" `
-    -ErrorMsg "Faltan skills en ~/.agents\skills" `
-    -FixMsg "Ejecuta 'free-computer-user update' para desplegarlas"
+    -ErrorMsg "Faltan skills en ~/.dsh\skills (se esperan las dos)" `
+    -FixMsg "Ejecuta 'free-computer-user update' o install.ps1 para desplegarlas"
 
-$duplicated = @("free-control-chrome", "free-control-brave", "free-control-edge") |
-    Where-Object { Test-Path (Join-Path $globalSkills "$_\SKILL.md") }
+# Skills duplicadas de versiones anteriores (free-control-chrome/brave/edge), solo en
+# los directorios que gestionamos.
+$managedSkillDirs = @($dshSkills, (Join-Path $env:USERPROFILE ".gemini\config\skills"))
+$duplicated = @()
+foreach ($managedSkillDir in $managedSkillDirs) {
+    foreach ($legacySkill in @("free-control-chrome", "free-control-brave", "free-control-edge")) {
+        if (Test-Path (Join-Path $managedSkillDir "$legacySkill\SKILL.md")) {
+            $duplicated += (Join-Path $managedSkillDir $legacySkill)
+        }
+    }
+}
 Report-Check -Name "Sin skills duplicadas" -Status ($duplicated.Count -eq 0) `
     -SuccessMsg "Solo hay una skill de navegador" `
     -ErrorMsg ("Skills duplicadas presentes: " + ($duplicated -join ", ")) `
     -FixMsg "Ejecuta 'free-computer-user update' para consolidarlas en free-control-browser"
+
+# ~/.agents\skills: a proposito NO se despliega nada ahi (v1.0.14). Codex lee esa
+# carpeta como skills globales y usaba las nuestras sin que el usuario lo pidiera.
+# Nunca es un FAIL: es un AVISO, y lo que se avise NO se borra desde aqui.
+$agentsOwnSkills = @()
+foreach ($ownSkill in @("free-computer-user", "free-control-browser", "free-control-chrome", "free-control-brave", "free-control-edge")) {
+    if (Test-Path (Join-Path $agentsSkills "$ownSkill\SKILL.md")) { $agentsOwnSkills += $ownSkill }
+}
+if ($agentsOwnSkills.Count -gt 0) {
+    Write-Host ("  [AVISO] Skills de ComputerUser en ~/.agents\skills: " + ($agentsOwnSkills -join ", ")) -ForegroundColor Yellow
+    Write-Host "          Codex lee esa carpeta como skills globales: PODRIA VERLAS Y USARLAS sin que se lo pidas." -ForegroundColor Yellow
+    Write-Host "          Desde v1.0.14 ya no se despliegan ahi. Borralas a mano si quieres que Codex deje de verlas." -ForegroundColor Yellow
+} else {
+    Write-Host "  [OK] ~/.agents\skills sin skills nuestras (Codex no las vera)." -ForegroundColor Green
+}
 
 # 5. Configuración de Seguridad y Allowlist
 Write-Host ""
@@ -349,19 +373,29 @@ if (Test-Path $antigravityDir) {
         Write-Host "  [NOTA] $agyShimFile ya no se necesita: el puente oficial (runtime\bin\mcp-bridge.mjs) hace lo mismo y se actualiza con el paquete. Se deja intacto." -ForegroundColor DarkGray
     }
 
-    $agySkillsLink = Join-Path $antigravityDir "skills"
-    $agySkillsExpected = (Resolve-Path $globalSkills -ErrorAction SilentlyContinue).Path
-    $agySkillsItem = Get-Item $agySkillsLink -Force -ErrorAction SilentlyContinue
-    $agySkillsTargets = if ($agySkillsItem -and $agySkillsItem.Target) { @($agySkillsItem.Target) } else { @() }
-    $agySkillsOk = $false
-    foreach ($agySkillsTarget in $agySkillsTargets) {
-        $agySkillsResolved = (Resolve-Path $agySkillsTarget -ErrorAction SilentlyContinue).Path
-        if ($agySkillsResolved -and $agySkillsExpected -and ($agySkillsResolved -eq $agySkillsExpected)) { $agySkillsOk = $true }
+    # Antigravity / Gemini carga las skills globales de ~/.gemini/config/skills. Ahi va
+    # SOLO free-control-browser (el escritorio no esta soportado en Antigravity) y como
+    # CARPETA REAL. El junction antiguo -> ~/.agents\skills ya no existe: si volviera,
+    # Codex veria otra vez las skills.
+    $agySkillsDir = Join-Path $antigravityDir "skills"
+    $agySkillsItem = Get-Item -LiteralPath $agySkillsDir -Force -ErrorAction SilentlyContinue
+    $agySkillsIsLink = [bool]($agySkillsItem -and ((($agySkillsItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)))
+    $agyBrowserSkill = Test-Path (Join-Path $agySkillsDir "free-control-browser\SKILL.md")
+    $agyDesktopSkill = Test-Path (Join-Path $agySkillsDir "free-computer-user\SKILL.md")
+    if ($agySkillsIsLink) {
+        $agyLinkTarget = if ($agySkillsItem.Target) { $agySkillsItem.Target -join ", " } else { "?" }
+        Report-Check -Name "Antigravity Skills" -Status $false `
+            -ErrorMsg "~/.gemini/config/skills es un enlace (junction/symlink -> $agyLinkTarget): debe ser una carpeta REAL" `
+            -FixMsg "Ejecuta 'free-computer-user update' o install.ps1 (retira el junction y despliega la carpeta real)"
+    } else {
+        Report-Check -Name "Antigravity Skills" -Status $agyBrowserSkill `
+            -SuccessMsg "free-control-browser en ~/.gemini/config/skills (carpeta real, solo navegador)" `
+            -ErrorMsg "Falta ~/.gemini/config/skills/free-control-browser/SKILL.md" `
+            -FixMsg "Ejecuta 'free-computer-user update' o install.ps1"
     }
-    Report-Check -Name "Antigravity Skills" -Status $agySkillsOk `
-        -SuccessMsg "Junction ~/.gemini/config/skills -> ~/.agents/skills" `
-        -ErrorMsg "Falta el junction ~/.gemini/config/skills -> ~/.agents/skills (Antigravity no vera las skills globales)" `
-        -FixMsg "Ejecuta 'free-computer-user update' o install.ps1"
+    if ($agyDesktopSkill) {
+        Write-Host "  [AVISO] free-computer-user tambien esta en ~/.gemini/config/skills: ahi solo debe estar la del navegador (el escritorio NO esta soportado en Antigravity)." -ForegroundColor Yellow
+    }
 } elseif (Test-Path $antigravityLegacy) {
     $hasLegacy = (Get-Content $antigravityLegacy -Raw) -match "computer-user"
     Report-Check -Name "Antigravity MCP" -Status (-not $hasLegacy) `

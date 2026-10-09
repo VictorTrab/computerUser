@@ -45,13 +45,36 @@ Tabla honesta de lo verificado. **Soportado** = probado de extremo a extremo en 
 Matices que conviene tener a mano:
 
 - El **escritorio en Antigravity no está retirado**: la integración (entrada del puente en
-  `~/.gemini/config/mcp_config.json` y junction de skills) se mantiene porque el **navegador depende
-  de ella**. Lo que no se promete es la fiabilidad del computer user allí. Si el cliente es
-  Antigravity, usa el navegador.
+  `~/.gemini/config/mcp_config.json` y `free-control-browser` en `~/.gemini/config/skills`) se mantiene
+  porque el **navegador depende de ella**. Lo que no se promete es la fiabilidad del computer user allí.
+  Si el cliente es Antigravity, usa el navegador.
 - `adapters\universal_runner.py` era el adaptador para lanzar el cliente desde el escritorio real
   (forzando `WinSta0\Default`). El **navegador no lo necesita** y el escritorio verificado va por el
   puente, así que **no viaja en el paquete**: se queda en el repositorio como herramienta de
   desarrollo (ver «Estructura del Sistema» y `scripts\package.ps1`).
+
+---
+
+## Qué skill se despliega en cada arnés (v1.0.14)
+
+Cada arnés lee las skills de un sitio distinto. Este es el reparto, a propósito y con su motivo:
+
+| Arnés / cliente | Carpeta donde se despliega | `free-computer-user` (escritorio) | `free-control-browser` (navegador) | Por qué |
+| :-- | :-- | :-- | :-- | :-- |
+| **DeepSeek Harness** | `~/.dsh/skills/` | **Sí** | **Sí** | Es el arnés donde el escritorio está verificado: necesita **las dos** skills. |
+| **Gemini / Antigravity** (app y CLI) | `~/.gemini/config/skills/` (**carpeta real**) | No | **Sí** | Antigravity lee las skills globales de ahí. Solo se despliega la del navegador porque el **escritorio no está soportado** allí; y como carpeta real, no como junction, para no reexponer lo que ya no debe verse. |
+| **Codex** | `~/.agents/skills/` → **a propósito SIN USAR** | No | No | Codex lee esa carpeta como skills globales y **usaba las nuestras sin que se lo pidieras**. Desde v1.0.14 el instalador **no escribe nunca** ahí (ni la crea, ni la borra: si existe, la deja como esté). El `doctor` avisa si encuentra nuestras skills ahí. |
+| **Otros clientes MCP** (Cursor, Claude Code…) | — | — | — | No consumen nuestras skills: usan el servidor MCP (`runtime\bin\mcp-bridge.mjs`). |
+
+Notas:
+
+- El instalador es **idempotente**: dos ejecuciones dejan exactamente los mismos ficheros (mismo SHA256).
+- El instalador **solo crea y actualiza lo suyo**: no borra ficheros ni carpetas del usuario. La
+  limpieza de skills antiguas (`free-control-chrome/brave/edge`) se limita a los directorios que
+  gestiona, y el junction antiguo `~/.gemini/config/skills -> ~/.agents/skills` se sustituye por la
+  carpeta real (se borra el enlace, nunca su destino).
+- `~/.agents/skills` puede quedarse vacía: es correcto. El desinstalador borra de ahí **solo** nuestras
+  dos carpetas, jamás la carpeta contenedora ni skills de terceros.
 
 ---
 
@@ -64,8 +87,10 @@ irm https://raw.githubusercontent.com/VictorTrab/computerUser/master/scripts/ins
 ```
 
 El instalador descarga el paquete optimizado desde GitHub Releases, registra el Native Messaging Host
-(`com.victortrab.computeruser`) en los navegadores, despliega las skills en `~/.agents/skills`,
-sincroniza el shim `browser` y configura el servidor MCP en los arneses detectados.
+(`com.victortrab.computeruser`) en los navegadores, despliega las skills en `~/.dsh/skills` (las dos) y
+en `~/.gemini/config/skills` (solo la del navegador), sincroniza el shim `browser` y configura el
+servidor MCP en los arneses detectados. En `~/.agents/skills` **no escribe nada** (ver la tabla de
+arriba).
 
 ---
 

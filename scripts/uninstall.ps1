@@ -44,27 +44,66 @@ foreach ($root in $browserRegRoots) {
     }
 }
 
-# 2. Eliminar Skills globales
-Write-Host "[2/6] Eliminando skills de ~/.agents/skills y ~/.dsh/skills..." -ForegroundColor Gray
-$skillNames = @(
-    "free-computer-user",
-    "free-control-browser",
-    "free-control-chrome",
-    "free-control-brave",
-    "free-control-edge",
-    "computer-use-windows",
-    "control-chrome"
-)
-$skillPaths = @()
-foreach ($n in $skillNames) {
-    $skillPaths += (Join-Path $env:USERPROFILE ".agents\skills\$n")
-    $skillPaths += (Join-Path $env:USERPROFILE ".dsh\skills\$n")
+# 2. Eliminar Skills desplegadas (v1.0.14)
+Write-Host "[2/6] Eliminando las skills desplegadas..." -ForegroundColor Gray
+# Nuestras skills viven en ~/.dsh/skills (las dos) y en ~/.gemini/config/skills (solo
+# la del navegador). En ~/.agents/skills NO se despliega nada desde v1.0.14: alli se
+# borran UNICAMENTE nuestras dos carpetas, nunca la carpeta contenedora ni nada ajeno
+# (esa carpeta es de Codex y puede tener skills de terceros).
+$dshSkills = Join-Path $env:USERPROFILE ".dsh\skills"
+$agySkills = Join-Path $env:USERPROFILE ".gemini\config\skills"
+$currentSkillNames = @("free-computer-user", "free-control-browser")
+$legacySkillNames = @("free-control-chrome", "free-control-brave", "free-control-edge")
+
+# Directorios que gestionamos: nuestras skills actuales y las duplicadas antiguas.
+foreach ($skillDir in @($dshSkills, $agySkills)) {
+    foreach ($n in ($currentSkillNames + $legacySkillNames)) {
+        $sp = Join-Path $skillDir $n
+        if (Test-Path -LiteralPath $sp) {
+            Remove-Item -LiteralPath $sp -Recurse -Force
+            Write-Host "  [OK] Eliminado $sp" -ForegroundColor Green
+        }
+    }
 }
 
-foreach ($sp in $skillPaths) {
-    if (Test-Path $sp) {
-        Remove-Item -Path $sp -Recurse -Force
-        Write-Host "  [OK] Eliminado $sp" -ForegroundColor Green
+# Junction antiguo ~/.gemini/config/skills -> ~/.agents/skills: se retira EL ENLACE
+# (recursive:$false), nunca el contenido al que apunta.
+if (Test-Path -LiteralPath $agySkills) {
+    $agySkillsItem = Get-Item -LiteralPath $agySkills -Force -ErrorAction SilentlyContinue
+    if ($agySkillsItem -and (($agySkillsItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        try {
+            [System.IO.Directory]::Delete($agySkills, $false)
+        } catch {
+            & cmd.exe /c rmdir "$agySkills" 2>$null | Out-Null
+        }
+        if (Test-Path -LiteralPath $agySkills) {
+            Write-Host "  [AVISO] No se pudo retirar el junction antiguo $agySkills" -ForegroundColor DarkYellow
+        } else {
+            Write-Host "  [OK] Junction antiguo eliminado: $agySkills (-> ~/.agents\skills)" -ForegroundColor Green
+        }
+    }
+}
+
+# ~/.agents/skills: SOLO nuestras dos carpetas actuales; jamas la contenedora ni nada
+# ajeno (las skills de terceros de Codex se quedan intactas).
+$agentsSkills = Join-Path $env:USERPROFILE ".agents\skills"
+if (Test-Path -LiteralPath $agentsSkills) {
+    foreach ($n in $currentSkillNames) {
+        $sp = Join-Path $agentsSkills $n
+        if (Test-Path -LiteralPath $sp) {
+            Remove-Item -LiteralPath $sp -Recurse -Force
+            Write-Host "  [OK] Eliminado $sp (solo nuestro)" -ForegroundColor Green
+        }
+    }
+}
+
+# Si una carpeta que SOLO usabamos nosotros queda vacia, se retira; si tiene algo del
+# usuario, se deja tal cual.
+foreach ($ownDir in @($dshSkills, $agySkills)) {
+    if ((Test-Path -LiteralPath $ownDir) -and
+        (@(Get-ChildItem -LiteralPath $ownDir -Force -ErrorAction SilentlyContinue).Count -eq 0)) {
+        Remove-Item -LiteralPath $ownDir -Force -ErrorAction SilentlyContinue
+        Write-Host "  [OK] Carpeta vacia eliminada: $ownDir" -ForegroundColor DarkGray
     }
 }
 

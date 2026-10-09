@@ -285,47 +285,132 @@ foreach ($root in $browserRegRoots) {
     Write-Host "  [OK] $regKey" -ForegroundColor Green
 }
 
-# 4. Instalar Skills Globales en ~/.agents
-Write-Host "[4/7] Desplegando skills globales en ~/.agents\skills..." -ForegroundColor Gray
+# 4. Desplegar Skills en los arneses que SI deben verlas (v1.0.14)
+Write-Host "[4/7] Desplegando skills por arnes..." -ForegroundColor Gray
 
-$globalSkillsDir = Join-Path $env:USERPROFILE ".agents\skills"
-if (-not (Test-Path $globalSkillsDir)) {
-    New-Item -ItemType Directory -Path $globalSkillsDir -Force | Out-Null
-}
+# Reparto por arnes (v1.0.14). El porque, en una linea:
+#   ~/.dsh/skills\                 -> DeepSeek Harness: AMBAS skills (escritorio + navegador).
+#   ~/.gemini/config/skills\       -> Gemini / Antigravity: SOLO free-control-browser (carpeta
+#                                     REAL, sin junction). El escritorio no esta soportado ahi.
+#   ~/.agents/skills\              -> NO SE ESCRIBE NUNCA. Codex lee esa carpeta como skills
+#                                     globales y usaba las nuestras sin que el usuario lo pidiera.
+#                                     Si existe una instalacion anterior alli, no se borra aqui:
+#                                     el doctor lo avisa (nunca un FAIL).
+$dshSkillsDir   = Join-Path $env:USERPROFILE ".dsh\skills"
+$agyConfigDir   = Join-Path $env:USERPROFILE ".gemini\config"
+$agySkillsDir   = Join-Path $agyConfigDir "skills"
+$agentsSkillsDir = Join-Path $env:USERPROFILE ".agents\skills"
 
-# Retirar skills duplicadas de versiones anteriores
-foreach ($old in $LegacySkills) {
-    $oldDir = Join-Path $globalSkillsDir $old
-    if (Test-Path $oldDir) {
-        Remove-Item -Recurse -Force $oldDir -ErrorAction SilentlyContinue
-        Write-Host "  [OK] Skill duplicada eliminada: $old" -ForegroundColor DarkGray
+# Hash SHA256 de un array de bytes, para decidir si un SKILL.md ya esta al dia sin
+# reescribirlo (idempotencia: dos ejecuciones dejan el mismo hash de fichero).
+function Get-SkillBytesHash {
+    param([byte[]]$Bytes)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha.ComputeHash($Bytes)).Replace("-", "")
+    } finally {
+        $sha.Dispose()
     }
 }
 
-foreach ($sName in $SkillNames) {
-    $destDir = Join-Path $globalSkillsDir $sName
-    if (-not (Test-Path $destDir)) {
+# Contenido de una skill: del repo si esta disponible (instalacion local), si no del
+# raw de GitHub. Se devuelven BYTES para no re-codificar el fichero.
+function Get-SkillBytes {
+    param([string]$SkillName)
+    $localSkill = if ($ScriptRoot) { Join-Path $ScriptRoot "..\skills\$SkillName\SKILL.md" } else { $null }
+    if ($localSkill -and (Test-Path $localSkill)) {
+        return [System.IO.File]::ReadAllBytes($localSkill)
+    }
+    $rawUrl = "$RepoRawBase/skills/$SkillName/SKILL.md"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $response = Invoke-WebRequest -Uri $rawUrl -UseBasicParsing -ErrorAction Stop
+    if ($response.RawContentStream) { return $response.RawContentStream.ToArray() }
+    return [System.Text.Encoding]::UTF8.GetBytes([string]$response.Content)
+}
+
+# Idempotente: solo escribe si el contenido cambia. Nunca borra nada.
+function Deploy-Skill {
+    param([string]$SkillName, [string]$TargetDir)
+    try {
+        $bytes = Get-SkillBytes -SkillName $SkillName
+    } catch {
+        Write-Host "  (Aviso: No se pudo obtener la skill ${SkillName}: $_)" -ForegroundColor DarkYellow
+        return
+    }
+    $destDir = Join-Path $TargetDir $SkillName
+    $destFile = Join-Path $destDir "SKILL.md"
+    if (Test-Path -LiteralPath $destFile) {
+        try {
+            $currentHash = Get-SkillBytesHash -Bytes ([System.IO.File]::ReadAllBytes($destFile))
+            if ($currentHash -eq (Get-SkillBytesHash -Bytes $bytes)) {
+                Write-Host "  [OK] $SkillName ya al dia en $TargetDir" -ForegroundColor DarkGray
+                return
+            }
+        } catch { }
+    }
+    if (-not (Test-Path -LiteralPath $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
     }
-    $destFile = Join-Path $destDir "SKILL.md"
+    [System.IO.File]::WriteAllBytes($destFile, $bytes)
+    Write-Host "  [OK] $SkillName desplegada en $TargetDir" -ForegroundColor Green
+}
 
-    # Buscar origen local (ej. repositorio clonado); con `iex` no hay origen local
-    $localSkill = if ($ScriptRoot) { Join-Path $ScriptRoot "..\skills\$sName\SKILL.md" } else { $null }
-    if ($localSkill -and (Test-Path $localSkill)) {
-        Copy-Item -Path $localSkill -Destination $destFile -Force
-    } else {
-        # Descarga directa a ~/.agents\skills (sin tocar el directorio del motor)
-        $rawUrl = "$RepoRawBase/skills/$sName/SKILL.md"
+# Junction antiguo: ~/.gemini/config/skills -> ~/.agents/skills. Se sustituye por una
+# CARPETA REAL (y se borra EL ENLACE, nunca su destino).
+if (Test-Path -LiteralPath $agySkillsDir) {
+    $agySkillsItem = Get-Item -LiteralPath $agySkillsDir -Force
+    if (($agySkillsItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
         try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $rawUrl -OutFile $destFile -UseBasicParsing -ErrorAction Stop
+            # recursive:$false borra el reparse point, no el contenido enlazado.
+            [System.IO.Directory]::Delete($agySkillsDir, $false)
         } catch {
-            Write-Host "  (Aviso: No se pudo descargar la skill $sName desde GitHub: $_)" -ForegroundColor DarkYellow
+            & cmd.exe /c rmdir "$agySkillsDir" 2>$null | Out-Null
+        }
+        if (Test-Path -LiteralPath $agySkillsDir) {
+            Write-Host "  [AVISO] No se pudo retirar el junction antiguo $agySkillsDir; se deja como esta." -ForegroundColor DarkYellow
+        } else {
+            Write-Host "  [OK] Junction antiguo retirado: $agySkillsDir (-> ~/.agents\skills)" -ForegroundColor DarkGray
         }
     }
 }
 
-Write-Host "  [OK] Skills disponibles universalmente en ~/.agents\skills (escritorio y navegador)." -ForegroundColor Green
+# Skills duplicadas de versiones anteriores: solo en los directorios que gestionamos.
+foreach ($managedDir in @($dshSkillsDir, $agySkillsDir)) {
+    foreach ($old in $LegacySkills) {
+        $oldDir = Join-Path $managedDir $old
+        if (Test-Path -LiteralPath $oldDir) {
+            Remove-Item -Recurse -Force $oldDir -ErrorAction SilentlyContinue
+            Write-Host "  [OK] Skill duplicada eliminada: $oldDir" -ForegroundColor DarkGray
+        }
+    }
+}
+
+# DeepSeek Harness: AMBAS skills (escritorio y navegador). La carpeta se crea si falta.
+if (-not (Test-Path -LiteralPath $dshSkillsDir)) {
+    New-Item -ItemType Directory -Path $dshSkillsDir -Force | Out-Null
+}
+foreach ($sName in $SkillNames) {
+    Deploy-Skill -SkillName $sName -TargetDir $dshSkillsDir
+}
+Write-Host "  [OK] DeepSeek Harness: las dos skills en $dshSkillsDir." -ForegroundColor Green
+
+# Gemini / Antigravity: SOLO la del navegador, y en carpeta real. Igual que con el
+# mcp_config.json, NO se crea ~/.gemini\config de la nada: si Gemini no esta
+# instalado, no hay nada que desplegar.
+if (Test-Path -LiteralPath $agyConfigDir) {
+    if (-not (Test-Path -LiteralPath $agySkillsDir)) {
+        New-Item -ItemType Directory -Path $agySkillsDir -Force | Out-Null
+    }
+    Deploy-Skill -SkillName "free-control-browser" -TargetDir $agySkillsDir
+    Write-Host "  [OK] Gemini/Antigravity: solo free-control-browser en $agySkillsDir (carpeta real)." -ForegroundColor Green
+} else {
+    Write-Host "  (Gemini/Antigravity no detectado, se omite el despliegue de skills ahi)." -ForegroundColor DarkGray
+}
+
+# ~/.agents\skills: a proposito SIN USAR. Nunca se escribe ni se borra aqui.
+if (Test-Path -LiteralPath $agentsSkillsDir) {
+    Write-Host "  [OK] ~/.agents\skills no se toca (Codex no vera nuestras skills)." -ForegroundColor DarkGray
+}
 
 # 5. Configurar DeepSeek Harness si existe (upsert del bloque completo)
 Write-Host "[5/7] Verificando integracion con DeepSeek Harness (dsh)..." -ForegroundColor Gray
@@ -411,28 +496,16 @@ if (Test-Path $agyCliDir) {
     }
 }
 
-# Antigravity tambien carga las skills globales desde ~/.gemini/config/skills: se
-# enlaza (junction) al mismo directorio que ya usan el resto de agentes.
-$agyGlobalSkillsLink = Join-Path $env:USERPROFILE ".gemini\config\skills"
-if ((Test-Path (Split-Path $agyGlobalSkillsLink)) -and -not (Test-Path $agyGlobalSkillsLink)) {
-    New-Item -ItemType Junction -Path $agyGlobalSkillsLink -Target $globalSkillsDir -ErrorAction SilentlyContinue | Out-Null
-}
-if (Test-Path $agyGlobalSkillsLink) {
-    $agySkillsExpected = (Resolve-Path $globalSkillsDir -ErrorAction SilentlyContinue).Path
-    $agySkillsTargets = @()
-    $agySkillsItem = Get-Item $agyGlobalSkillsLink -Force -ErrorAction SilentlyContinue
-    if ($agySkillsItem -and $agySkillsItem.Target) { $agySkillsTargets = @($agySkillsItem.Target) }
-    $agySkillsOk = $false
-    foreach ($agySkillsTarget in $agySkillsTargets) {
-        $agySkillsResolved = (Resolve-Path $agySkillsTarget -ErrorAction SilentlyContinue).Path
-        if ($agySkillsResolved -and $agySkillsExpected -and ($agySkillsResolved -eq $agySkillsExpected)) { $agySkillsOk = $true }
-    }
-    if ($agySkillsOk) {
-        Write-Host "  [OK] Junction de skills de Antigravity -> ~/.agents\skills." -ForegroundColor Green
-    } elseif ($agySkillsTargets.Count -gt 0) {
-        Write-Host "  (Aviso: $agyGlobalSkillsLink ya apunta a '$($agySkillsTargets -join ', ')'; NO se modifica. Cambialo a mano si quieres que use ~/.agents\skills)." -ForegroundColor DarkYellow
+# Antigravity tambien carga las skills globales desde ~/.gemini/config/skills, pero
+# YA NO se enlaza (junction) a ~/.agents\skills: ahi solo vive free-control-browser,
+# como CARPETA REAL, y se despliega en el paso 4. El junction antiguo se retira alli.
+$agyGlobalSkillsDir = Join-Path $env:USERPROFILE ".gemini\config\skills"
+if (Test-Path -LiteralPath $agyGlobalSkillsDir) {
+    $agySkillsItem = Get-Item -LiteralPath $agyGlobalSkillsDir -Force
+    if (($agySkillsItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Write-Host "  (Aviso: $agyGlobalSkillsDir sigue siendo un enlace; revisalo a mano.)" -ForegroundColor DarkYellow
     } else {
-        Write-Host "  (Aviso: $agyGlobalSkillsLink ya existe y no es un junction; NO se modifica.)" -ForegroundColor DarkYellow
+        Write-Host "  [OK] Antigravity lee las skills de $agyGlobalSkillsDir (carpeta real, solo navegador)." -ForegroundColor Green
     }
 }
 
